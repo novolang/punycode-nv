@@ -1,0 +1,127 @@
+// tests/embedded_probe.nv — the package's device claim, as a program
+// that either builds for a Cortex-M or does not.
+//
+// The shard audit's `core-embedded` row copies this and the modules its
+// `use` lines reach into a package of its own and runs
+//
+//   novo build --target=nrf52-qemu src/probe.nv
+//
+// which produces a real Cortex-M4 ELF or fails.  The consumer that
+// makes the claim worth having is a device with a display: showing a
+// domain name to a person is the one security decision firmware cannot
+// delegate to its host, because a name rendered on the host is a name
+// the host could have replaced.  A payment terminal that shows where a
+// transaction is going, or a device pairing over a local network, has
+// to decode `xn--` itself — and it has a few kilobytes of RAM to do it
+// in.
+//
+// It BUILDS; it does not run.  Every function it calls is a `todo()`
+// today, so a device that executed this would panic on the first line
+// of `main`.  What is being checked is the tier: `--target=nrf52-qemu`
+// stamps `@tier(embedded)` on every function it compiles, so the
+// checker walks the module and refuses a `Str` concatenation, a list
+// literal or an unbounded `while` wherever the implementation later
+// puts one.
+//
+// `punycode`, `punyidna` AND `punyerr` ARE NOT USED HERE, and that is
+// the split rather than a convenience: they speak `Str` and `Cursor`,
+// the embedded runtime defines neither, and one host-only function
+// anywhere in a compilation unit is an undefined symbol at embedded
+// link time whether or not the firmware calls it.  `punyidna` also
+// needs unicode-nv's tables, which are hundreds of kilobytes and are
+// not going on a device at all.
+
+use punyboot
+
+// The encoded half of `xn--bcher-kva`, the way firmware holds a label
+// it has been handed.
+//
+// The array is a FIELD of a `@value` struct rather than a return type,
+// because `[u8; 9]` is a true inline array only inside one — outside,
+// the annotation still means a list, and a list literal is an implicit
+// heap allocation the tier refuses (SPEC § 14.4).
+@value
+struct ProbeLabel
+    b: [u8; 9]
+
+// `bcher-kva` — RFC 3492 § 7.1's German sample without its prefix.
+fn probe_label() -> ProbeLabel
+    ProbeLabel { b: [0x62 as u8, 0x63 as u8, 0x68 as u8, 0x65 as u8,
+                     0x72 as u8, 0x2d as u8, 0x6b as u8, 0x76 as u8,
+                     0x61 as u8] }
+
+fn main() [hw]
+    // The parameters, so a device that sizes a scratch buffer compiles
+    // the same numbers the host does.
+    //
+    // Each step is bound with its type written out because a call into
+    // another module does not have its return type inferred in a
+    // single-file build.  Inside a package built as one unit — which is
+    // what every host suite does — none of these annotations is needed.
+    let p: PunyParams = punyboot.params()
+    let dash: Int = punyboot.delimiter()
+    let cap: Int = punyboot.max_label_len()
+    let dcap: Int = punyboot.max_domain_len()
+    let plen: Int = punyboot.prefix_len()
+    let bound: Int = punyboot.overflow_limit()
+
+    // Find the delimiter by scanning from the RIGHT, which is the one
+    // rule a decoder written from the prose gets wrong: a label may
+    // hold hyphens of its own.
+    let label = probe_label()
+    var cut: Int = 0 - 1
+    for i in 0..9
+        let c: u8 = label.b[i]
+        if c as Int == dash
+            cut = i
+
+    // The basic half is copied out unchanged; a real device would be
+    // putting these on its screen.
+    var basics: Int = 0
+    for i in 0..9
+        if i < cut
+            let c: u8 = label.b[i]
+            if punyboot.is_basic(c as Int)
+                basics = basics + 1
+            hal.uart.write(".")
+
+    // The decode loop: digits in, deltas out, in registers and with no
+    // buffer.
+    var st: PunyState = punyboot.state(basics, p)
+    var scan: PunyDigitScan = punyboot.digit_scan(0, p)
+    var handled: Int = basics
+    for i in 0..9
+        if i > cut
+            let c: u8 = label.b[i]
+            let d: Int = punyboot.digit_value(c as Int)
+            scan = punyboot.digit_push(scan, c as Int, st.bias, p)
+            if scan.done
+                let ins: PunyInsertion = punyboot.insertion(st, handled + 1, p)
+                st = punyboot.after_insertion(st, ins, handled + 1, p)
+                handled = handled + 1
+                scan = punyboot.digit_scan(0, p)
+                // A real device would write the character here.
+                hal.uart.write("-")
+            if d >= 0
+                hal.uart.write("=")
+
+    // And the encode direction, which is what a device answering with a
+    // name it composed itself runs.
+    var enc: PunyState = punyboot.state(basics, p)
+    enc = punyboot.skip(enc, p)
+    enc = punyboot.advance_to(enc, 252, p)
+    let t: Int = punyboot.threshold(p.base, enc.bias, p)
+    let bias2: Int = punyboot.adapt(enc.delta, handled + 1, true, p)
+    let em: PunyEmit = punyboot.emit_delta(enc.delta, bias2, p)
+    for k in 0..em.len
+        let ch: u8 = em.out[k]
+        hal.uart.write("+")
+
+    let after: PunyState = punyboot.after_delta(enc, handled + 1, p)
+    let back: Int = punyboot.digit_char(0)
+
+    if em.ok and not st.bad and not after.bad and cut > 0
+        if back > 0 and t > 0 and cap + dcap + plen + bound > 0
+            hal.uart.write("!")
+
+    hal.uart.write("punycode-nv: deltas in registers\n")

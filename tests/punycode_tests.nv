@@ -1,0 +1,559 @@
+// tests/punycode_tests.nv — RFC 3492's sample strings, its own
+// arithmetic written out, and the UTS #46 cases where two
+// implementations disagree.
+//
+// They COMPILE today and they FAIL at run, with `not implemented:
+// <module>.<fn>` from the `todo()` that is each body.  That is the
+// expected state of an interface release: the compiler has checked
+// every signature, every type and every effect row, and nothing else
+// has been checked because there is nothing else yet.
+//
+// WHERE THE VECTORS COME FROM.  RFC 3492 § 5 for the six parameters,
+// § 6.1 for `adapt`, § 6.2 for the threshold clamp, § 7.1 for the
+// sample strings — including the all-ASCII one that ends in a bare
+// delimiter, which is the case a decoder written from the prose gets
+// wrong.  UTS #46 § 4 for the mapping and validity criteria, and its
+// own deviation example `faß.de`, which is the one name that resolves
+// to two different places depending on the vintage of the resolver.
+// A test that passes here is a name any conforming implementation
+// reads the same way.
+
+use std.test
+use std.bytes
+use punyboot
+use punycode
+use punyidna
+use punyerr
+use udata
+
+// ── the six parameters ──────────────────────────────────────────────
+
+@test
+fn test_the_parameters_are_rfc_3492_section_fives_own()
+    let p = punyboot.params()
+    test.assert_eq(p.base, 36)
+    test.assert_eq(p.tmin, 1)
+    test.assert_eq(p.tmax, 26)
+    test.assert_eq(p.skew, 38)
+    test.assert_eq(p.damp, 700)
+    test.assert_eq(p.initial_bias, 72)
+    test.assert_eq(p.initial_n, 128)
+
+@test
+fn test_the_delimiter_and_the_limits_are_named()
+    test.assert_eq(punyboot.delimiter(), 45)
+    test.assert_eq(punyboot.max_label_len(), 63)
+    test.assert_eq(punyboot.max_domain_len(), 253)
+    test.assert_eq(punyboot.prefix_len(), 4)
+    test.assert_eq(punyboot.overflow_limit() > 0, true)
+
+@test
+fn test_basic_means_below_one_hundred_and_twenty_eight()
+    // The whole of what the word means in RFC 3492, and the reason an
+    // ASCII label encodes to itself.
+    test.assert_eq(punyboot.is_basic(0), true)
+    test.assert_eq(punyboot.is_basic(127), true)
+    test.assert_eq(punyboot.is_basic(128), false)
+    test.assert_eq(punyboot.is_basic(0xfc), false)
+
+// ── the digit alphabet ──────────────────────────────────────────────
+
+@test
+fn test_the_digits_are_letters_then_numerals_and_case_is_not_significant()
+    // Case insensitivity is what lets a punycode label survive being
+    // upper-cased for a QR code.
+    test.assert_eq(punyboot.digit_value(97), 0)
+    test.assert_eq(punyboot.digit_value(122), 25)
+    test.assert_eq(punyboot.digit_value(65), 0)
+    test.assert_eq(punyboot.digit_value(90), 25)
+    test.assert_eq(punyboot.digit_value(48), 26)
+    test.assert_eq(punyboot.digit_value(57), 35)
+    test.assert_eq(punyboot.digit_value(45), 0 - 1)
+    test.assert_eq(punyboot.digit_value(0xfc), 0 - 1)
+
+@test
+fn test_an_encoder_writes_lower_case_and_nothing_else()
+    // Upper case would be a second encoding of one label, and `xn--`
+    // labels are compared as bytes by resolvers that have never heard
+    // of punycode.
+    test.assert_eq(punyboot.digit_char(0), 97)
+    test.assert_eq(punyboot.digit_char(25), 122)
+    test.assert_eq(punyboot.digit_char(26), 48)
+    test.assert_eq(punyboot.digit_char(35), 57)
+    test.assert_eq(punyboot.digit_char(36), 0 - 1)
+    test.assert_eq(punyboot.digit_char(0 - 1), 0 - 1)
+
+// ── the moving threshold, which is the whole trick ──────────────────
+
+@test
+fn test_the_threshold_is_base_times_k_less_the_bias_clamped_both_ends()
+    // RFC 3492 § 6.2's `t(k)`, written out.  At the initial bias the
+    // first threshold is below `tmin` and clamps to it, which is why an
+    // early delta spends few digits.
+    let p = punyboot.params()
+    test.assert_eq(punyboot.threshold(36, 72, p), 1)
+    test.assert_eq(punyboot.threshold(72, 72, p), 1)
+    test.assert_eq(punyboot.threshold(108, 72, p), 26)
+    test.assert_eq(punyboot.threshold(36, 0, p), 26)
+    test.assert_eq(punyboot.threshold(36, 20, p), 16)
+
+@test
+fn test_the_first_adaptation_is_damped_and_every_later_one_is_halved()
+    // The damping is what stops one early outlier — a single character
+    // far from the rest — from making every following character
+    // expensive.
+    let p = punyboot.params()
+    test.assert_eq(punyboot.adapt(0, 1, true, p), 0)
+    test.assert_eq(punyboot.adapt(p.damp, 1, true, p), 1)
+    // The same delta without the damping divides by 2 instead, so it
+    // lands somewhere else entirely.
+    test.assert_eq(punyboot.adapt(p.damp, 1, true, p) == punyboot.adapt(p.damp, 1, false, p), false)
+
+@test
+fn test_the_state_starts_where_the_parameters_say()
+    let p = punyboot.params()
+    let s = punyboot.state(5, p)
+    test.assert_eq(s.n, 128)
+    test.assert_eq(s.delta, 0)
+    test.assert_eq(s.bias, 72)
+    test.assert_eq(s.h, 5)
+    test.assert_eq(s.first, true)
+    test.assert_eq(s.bad, false)
+
+@test
+fn test_skipping_a_code_point_costs_one_delta()
+    let p = punyboot.params()
+    let s = punyboot.skip(punyboot.state(5, p), p)
+    test.assert_eq(s.delta, 1)
+    test.assert_eq(s.bad, false)
+
+@test
+fn test_advancing_the_running_code_point_folds_the_distance_in()
+    // `ü` is 0xfc, four above the initial `n` of 128 — no: it is 124
+    // above, and the fold is over the count of code points that could
+    // have come between.
+    let p = punyboot.params()
+    let s = punyboot.advance_to(punyboot.state(5, p), 0xfc, p)
+    test.assert_eq(s.n, 0xfc)
+    test.assert_eq(s.bad, false)
+
+@test
+fn test_a_digit_scan_ends_when_the_digit_is_below_the_threshold()
+    let p = punyboot.params()
+    // `a` is digit 0, which at the initial bias is below the first
+    // threshold and so ends the number.
+    let d = punyboot.digit_push(punyboot.digit_scan(0, p), 97, p.initial_bias, p)
+    test.assert_eq(d.done, true)
+    test.assert_eq(d.delta, 0)
+    test.assert_eq(d.bad, false)
+
+@test
+fn test_a_character_that_is_not_a_digit_is_refused_by_the_scan()
+    let p = punyboot.params()
+    let d = punyboot.digit_push(punyboot.digit_scan(0, p), 45, p.initial_bias, p)
+    test.assert_eq(d.bad, true)
+
+@test
+fn test_an_insertion_splits_the_delta_into_a_code_point_and_a_position()
+    // The two halves the delta encodes, separated by a division by
+    // `h + 1`.
+    let p = punyboot.params()
+    let ins = punyboot.insertion(punyboot.state(5, p), 6, p)
+    test.assert_eq(ins.n, 128)
+    test.assert_eq(ins.i, 0)
+    test.assert_eq(ins.bad, false)
+    let after = punyboot.after_insertion(punyboot.state(5, p), ins, 6, p)
+    test.assert_eq(after.bad, false)
+
+@test
+fn test_a_delta_writes_its_digits_least_significant_first()
+    let p = punyboot.params()
+    let e = punyboot.emit_delta(0, p.initial_bias, p)
+    test.assert_eq(e.ok, true)
+    test.assert_eq(e.len, 1)
+    test.assert_eq(e.out[0] as Int, 97)
+    let after = punyboot.after_delta(punyboot.state(5, p), 6, p)
+    test.assert_eq(after.delta, 0)
+    test.assert_eq(after.first, false)
+
+// ── RFC 3492's sample strings ───────────────────────────────────────
+
+@test
+fn test_the_german_sample_encodes_to_the_string_everyone_cites()
+    // `bücher` — five basic characters, one that is not, and the
+    // delimiter between them.
+    match punycode.encode("bücher")
+        Ok(s)  => test.assert_eq(s, "bcher-kva")
+        Err(e) => test.fail(e.message())
+    match punycode.decode("bcher-kva")
+        Ok(s)  => test.assert_eq(s, "bücher")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_the_german_label_carries_the_ace_prefix()
+    match punycode.encode_label("bücher")
+        Ok(s)  => test.assert_eq(s, "xn--bcher-kva")
+        Err(e) => test.fail(e.message())
+    match punycode.decode_label("xn--bcher-kva")
+        Ok(s)  => test.assert_eq(s, "bücher")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_a_second_german_sample_lands_on_a_different_bias()
+    match punycode.encode("münchen")
+        Ok(s)  => test.assert_eq(s, "mnchen-3ya")
+        Err(e) => test.fail(e.message())
+    match punycode.decode("mnchen-3ya")
+        Ok(s)  => test.assert_eq(s, "münchen")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_an_all_ascii_string_ends_in_a_bare_delimiter()
+    // RFC 3492 § 7.1's case (S): `-> $1.00 <-` encodes to itself with a
+    // hyphen on the end and no digits at all, because there is nothing
+    // to encode.  A decoder that assumed digits follow the delimiter
+    // gets this one wrong.
+    match punycode.encode("-> $1.00 <-")
+        Ok(s)  => test.assert_eq(s, "-> $1.00 <--")
+        Err(e) => test.fail(e.message())
+    match punycode.decode("-> $1.00 <--")
+        Ok(s)  => test.assert_eq(s, "-> $1.00 <-")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_an_ascii_label_is_not_encoded_at_all()
+    // Which is what makes an ASCII domain cost nothing: no prefix, no
+    // change.
+    match punycode.encode_label("example")
+        Ok(s)  => test.assert_eq(s, "example")
+        Err(e) => test.fail(e.message())
+    match punycode.decode_label("example")
+        Ok(s)  => test.assert_eq(s, "example")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_the_delimiter_is_the_last_hyphen_and_not_the_first()
+    // A label may hold hyphens of its own, so a decoder that scanned
+    // from the left would cut a name in the wrong place.
+    test.assert_eq(punycode.delimiter_at("pre-fix-kva"), 7)
+    test.assert_eq(punycode.delimiter_at("bcher-kva"), 5)
+    // And a label with no hyphen at all is entirely digits, which is
+    // the case the prose describes as if it could not happen.
+    test.assert_eq(punycode.delimiter_at("4can8pwxg"), 0 - 1)
+
+@test
+fn test_the_ace_prefix_is_recognised_whatever_the_case()
+    test.assert_eq(punycode.ace_prefix(), "xn--")
+    test.assert_eq(punycode.is_encoded_label("xn--bcher-kva"), true)
+    test.assert_eq(punycode.is_encoded_label("XN--BCHER-KVA"), true)
+    test.assert_eq(punycode.is_encoded_label("Xn--bcher-kva"), true)
+    test.assert_eq(punycode.is_encoded_label("example"), false)
+    test.assert_eq(punycode.is_encoded_label("xn-"), false)
+
+@test
+fn test_the_lengths_are_answered_without_producing_the_string()
+    match punycode.encoded_len("bücher")
+        Ok(n)  => test.assert_eq(n, 9)
+        Err(e) => test.fail(e.message())
+    match punycode.decoded_len("bcher-kva")
+        Ok(n)  => test.assert_eq(n, 6)
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_encoding_and_decoding_write_into_the_callers_buffer()
+    var enc = bytes.cursor_be(bytes.zeros(64))
+    match punycode.encode_into("bücher", enc)
+        Ok(n)  => test.assert_eq(n, 9)
+        Err(e) => test.fail(e.message())
+    var dec = bytes.cursor_be(bytes.zeros(64))
+    match punycode.decode_into("bcher-kva", dec)
+        Ok(n)  => test.assert_eq(n, 6)
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_a_character_that_is_not_a_digit_is_refused_with_its_position()
+    match punycode.decode("bcher-kv!")
+        Ok(_)  => test.fail("! is not a base-36 digit")
+        Err(e) =>
+            match e
+                PunyBadDigit(_, at, ch) =>
+                    test.assert_eq(at, 8)
+                    test.assert_eq(ch, 33)
+                    test.assert_eq(punyerr.error_offset(e), 8)
+                    test.assert_eq(punyerr.error_step(e), "decode")
+                _                       => test.fail("expected PunyBadDigit: ${e.message()}")
+
+@test
+fn test_the_round_trip_is_what_makes_a_label_canonical()
+    // Two encodings of one name are two names as far as a resolver is
+    // concerned, and a resolver has never heard of punycode.
+    test.assert_eq(punycode.is_canonical("xn--bcher-kva"), true)
+
+// ── UTS #46 ─────────────────────────────────────────────────────────
+
+@test
+fn test_the_default_options_are_the_ones_every_browser_uses()
+    let o = punyidna.nontransitional()
+    test.assert_eq(o.transitional, false)
+    test.assert_eq(o.check_bidi, true)
+    test.assert_eq(o.check_joiners, true)
+    test.assert_eq(o.verify_dns_length, true)
+    let t = punyidna.transitional()
+    test.assert_eq(t.transitional, true)
+    let s = punyidna.strict()
+    test.assert_eq(s.use_std3_ascii_rules, true)
+    test.assert_eq(s.check_hyphens, true)
+
+@test
+fn test_the_url_options_are_a_decision_rather_than_a_default()
+    // The WHATWG URL standard's own combination: nontransitional, STD3
+    // off, hyphens unchecked.  Refusing `_` would break a great deal of
+    // deployed naming, and a URL host is not a registry application.
+    let o = punyidna.url_options()
+    test.assert_eq(o.transitional, false)
+    test.assert_eq(o.use_std3_ascii_rules, false)
+    test.assert_eq(o.check_hyphens, false)
+
+@test
+fn test_the_seven_statuses_are_the_mapping_tables_own_spellings()
+    // So a reader can grep the data file with what this prints.
+    test.assert_eq(punyidna.status_name(PunyValid), "valid")
+    test.assert_eq(punyidna.status_name(PunyMapped), "mapped")
+    test.assert_eq(punyidna.status_name(PunyIgnored), "ignored")
+    test.assert_eq(punyidna.status_name(PunyDeviation), "deviation")
+    test.assert_eq(punyidna.status_name(PunyDisallowed), "disallowed")
+    test.assert_eq(punyidna.status_name(PunyDisallowedStd3Valid), "disallowed_STD3_valid")
+    test.assert_eq(punyidna.status_name(PunyDisallowedStd3Mapped), "disallowed_STD3_mapped")
+
+@test
+fn test_an_upper_case_letter_is_mapped_and_a_lower_case_one_is_valid()
+    let d = udata.data_full()
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0x41)), "mapped")
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0x61)), "valid")
+    // A soft hyphen is removed entirely.
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0xad)), "ignored")
+    // `_` is the STD3 case: valid for a URL, disallowed for a registry.
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0x5f)), "disallowed_STD3_valid")
+    test.assert_eq(punyidna.map_char(d, 0xad, punyidna.nontransitional()).len(), 0)
+    test.assert_eq(punyidna.map_char(d, 0x41, punyidna.nontransitional()).len(), 1)
+
+@test
+fn test_the_four_deviation_characters_are_where_two_vintages_disagree()
+    let d = udata.data_full()
+    // `ß`, `ς`, ZWJ, ZWNJ.
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0xdf)), "deviation")
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0x3c2)), "deviation")
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0x200d)), "deviation")
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0x200c)), "deviation")
+    // Under nontransitional `ß` stands for itself; under transitional
+    // it becomes `ss`, which is two characters and a different name.
+    test.assert_eq(punyidna.map_char(d, 0xdf, punyidna.nontransitional()).len(), 1)
+    test.assert_eq(punyidna.map_char(d, 0xdf, punyidna.transitional()).len(), 2)
+
+@test
+fn test_the_deviation_example_resolves_to_two_different_places()
+    // UTS #46's own: `faß.de` is `xn--fa-hia.de` under the processing
+    // every browser uses and `fass.de` under the one from 2003.  The
+    // same name typed by the same person reaches a different server.
+    let d = udata.data_full()
+    match punyidna.to_ascii(d, "faß.de", punyidna.nontransitional())
+        Ok(s)  => test.assert_eq(s, "xn--fa-hia.de")
+        Err(e) => test.fail(e.message())
+    match punyidna.to_ascii(d, "faß.de", punyidna.transitional())
+        Ok(s)  => test.assert_eq(s, "fass.de")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_to_ascii_maps_case_before_it_encodes()
+    let d = udata.data_full()
+    match punyidna.to_ascii(d, "Bücher.EXAMPLE", punyidna.nontransitional())
+        Ok(s)  => test.assert_eq(s, "xn--bcher-kva.example")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_an_ascii_domain_comes_back_unchanged()
+    let d = udata.data_full()
+    match punyidna.to_ascii(d, "example.com", punyidna.nontransitional())
+        Ok(s)  => test.assert_eq(s, "example.com")
+        Err(e) => test.fail(e.message())
+    match punyidna.to_unicode(d, "example.com", punyidna.nontransitional())
+        Ok(s)  => test.assert_eq(s, "example.com")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_to_unicode_is_what_a_person_is_shown()
+    let d = udata.data_full()
+    match punyidna.to_unicode(d, "xn--bcher-kva.example", punyidna.nontransitional())
+        Ok(s)  => test.assert_eq(s, "bücher.example")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_an_empty_label_is_not_a_domain()
+    let d = udata.data_full()
+    match punyidna.to_ascii(d, "a..b", punyidna.nontransitional())
+        Ok(_)  => test.fail("a..b is not a domain name")
+        Err(e) =>
+            match e
+                PunyEmptyLabel(at) =>
+                    test.assert_eq(at, 1)
+                    test.assert_eq(punyerr.error_step(e), "validate")
+                _                  => test.fail("expected PunyEmptyLabel: ${e.message()}")
+
+@test
+fn test_a_label_may_not_begin_with_a_combining_mark()
+    // Which UTS #46 forbids regardless of any option, because a label
+    // whose first character modifies nothing renders unpredictably.
+    let d = udata.data_full()
+    match punyidna.validate_label(d, "\u{0301}abc", punyidna.nontransitional())
+        Some(e) =>
+            match e
+                PunyLeadingCombiningMark(_, _) => test.assert_eq(1, 1)
+                _                              => test.fail("expected PunyLeadingCombiningMark: ${e.message()}")
+        None    => test.fail("a label may not begin with a combining mark")
+
+@test
+fn test_a_valid_label_answers_nothing()
+    let d = udata.data_full()
+    match punyidna.validate_label(d, "example", punyidna.nontransitional())
+        Some(e) => test.fail(e.message())
+        None    => test.assert_eq(1, 1)
+
+@test
+fn test_the_std3_rules_are_what_makes_an_underscore_a_decision()
+    let d = udata.data_full()
+    match punyidna.validate_label(d, "a_b", punyidna.strict())
+        Some(e) =>
+            match e
+                PunyDisallowedStd3(_, _, cp) => test.assert_eq(cp, 0x5f)
+                _                            => test.fail("expected PunyDisallowedStd3: ${e.message()}")
+        None    => test.fail("STD3 has no underscore")
+    match punyidna.validate_label(d, "a_b", punyidna.url_options())
+        Some(e) => test.fail(e.message())
+        None    => test.assert_eq(1, 1)
+
+@test
+fn test_the_hyphen_rules_are_what_browsers_turn_off()
+    // Which is why `xn--` labels and a good deal of deployed naming
+    // work at all.
+    let d = udata.data_full()
+    match punyidna.validate_label(d, "-lead", punyidna.strict())
+        Some(e) =>
+            match e
+                PunyBadHyphen(_, at) => test.assert_eq(at, 0)
+                _                    => test.fail("expected PunyBadHyphen: ${e.message()}")
+        None    => test.fail("a label may not begin with a hyphen under check_hyphens")
+    match punyidna.validate_label(d, "-lead", punyidna.url_options())
+        Some(e) => test.fail(e.message())
+        None    => test.assert_eq(1, 1)
+
+@test
+fn test_the_bidi_rule_applies_only_to_a_domain_that_has_one()
+    // RFC 5893's own scoping: a purely left-to-right domain is not
+    // subject to the rule, and applying it anyway would refuse
+    // perfectly good names.
+    let d = udata.data_full()
+    test.assert_eq(punyidna.is_bidi_domain(d, "example.com"), false)
+    match punyidna.bidi_rule(d, "example")
+        Some(e) => test.fail(e.message())
+        None    => test.assert_eq(1, 1)
+
+@test
+fn test_the_joiner_rules_are_named_and_scoped()
+    // Both joiners are invisible and both are necessary — Persian and
+    // several Indic scripts need them — so they are allowed under a
+    // context rule rather than banned.
+    let d = udata.data_full()
+    match punyidna.contextj_rule(d, "example")
+        Some(e) => test.fail(e.message())
+        None    => test.assert_eq(1, 1)
+    match punyidna.contexto_rule(d, "example")
+        Some(e) => test.fail(e.message())
+        None    => test.assert_eq(1, 1)
+
+@test
+fn test_a_domain_splits_on_the_full_stop_after_it_is_mapped()
+    // UTS #46 treats three other characters as full stops, and they
+    // are mapped to `.` in the mapping step — so the order of the
+    // steps is what makes splitting on `.` alone correct.
+    test.assert_eq(punyidna.split_labels("a.b.c").len(), 3)
+    test.assert_eq(punyidna.split_labels("example").len(), 1)
+    test.assert_eq(punyidna.join_labels(["a", "b"]), "a.b")
+
+@test
+fn test_the_mapping_step_is_published_on_its_own()
+    // Because a caller that wants to show a person what a name became
+    // needs the mapped form before the labels are split.
+    let d = udata.data_full()
+    match punyidna.map(d, "Bücher.EXAMPLE", punyidna.nontransitional())
+        Ok(s)  => test.assert_eq(s, "bücher.example")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_the_length_limits_are_answered_before_a_caller_commits()
+    let d = udata.data_full()
+    match punyidna.ascii_len(d, "bücher.example", punyidna.nontransitional())
+        Ok(n)  => test.assert_eq(n, 21)
+        Err(e) => test.fail(e.message())
+    test.assert_eq(punyidna.fits_dns(d, "example.com", punyidna.nontransitional()), true)
+
+@test
+fn test_a_compact_unidata_is_refused_rather_than_silently_unnormalised()
+    // unicode-nv's compact data omits normalisation, and a caller that
+    // passed it here would get a name that was never put into NFC.
+    let d = udata.data_compact()
+    match punyidna.map(d, "bücher", punyidna.nontransitional())
+        Ok(_)  => test.fail("the compact data carries no normalisation tables")
+        Err(e) =>
+            match e
+                PunyDataIncomplete(_) => test.assert_eq(punyerr.error_step(e), "normalize")
+                _                     => test.fail("expected PunyDataIncomplete: ${e.message()}")
+
+// ── what url-nv asks for ────────────────────────────────────────────
+
+@test
+fn test_the_host_call_is_the_one_url_nv_makes()
+    // url-nv's `host_problem` refuses a byte above 127 with `E_IDNA`
+    // today; with this package it calls `host_to_ascii` on the host
+    // span and re-runs its own forbidden-byte check on the result.
+    let d = udata.data_full()
+    match punyidna.host_to_ascii(d, "bücher.example")
+        Ok(s)  => test.assert_eq(s, "xn--bcher-kva.example")
+        Err(e) => test.fail(e.message())
+    match punyidna.host_to_unicode(d, "xn--bcher-kva.example")
+        Ok(s)  => test.assert_eq(s, "bücher.example")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_the_two_conversions_also_write_into_a_buffer()
+    // The allocation-free path, which is what url-nv's span-based
+    // parser wants: a `Str` back would be an allocation for something
+    // the caller can already see.
+    let d = udata.data_full()
+    var a = bytes.cursor_be(bytes.zeros(128))
+    match punyidna.to_ascii_into(d, "bücher.example", punyidna.nontransitional(), a)
+        Ok(n)  => test.assert_eq(n, 21)
+        Err(e) => test.fail(e.message())
+    var u = bytes.cursor_be(bytes.zeros(128))
+    match punyidna.to_unicode_into(d, "xn--bcher-kva.example", punyidna.nontransitional(), u)
+        Ok(n)  => test.assert_eq(n > 0, true)
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_one_label_converts_on_its_own()
+    // For a resolver walking a name, or a certificate matcher
+    // comparing one label against a wildcard.
+    let d = udata.data_full()
+    match punyidna.label_to_ascii(d, "bücher", punyidna.nontransitional())
+        Ok(s)  => test.assert_eq(s, "xn--bcher-kva")
+        Err(e) => test.fail(e.message())
+    match punyidna.label_to_unicode(d, "xn--bcher-kva", punyidna.nontransitional())
+        Ok(s)  => test.assert_eq(s, "bücher")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_a_refusal_names_its_label_and_its_step()
+    let e = PunyLabelTooLong(label: "xn--verylong", len: 70)
+    test.assert_eq(punyerr.error_label(e), "xn--verylong")
+    test.assert_eq(punyerr.error_offset(e), 0 - 1)
+    test.assert_eq(punyerr.error_step(e), "length")
+    test.assert_eq(punyerr.error_label(PunyDomainTooLong(len: 300)), "")

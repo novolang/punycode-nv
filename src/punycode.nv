@@ -1,0 +1,182 @@
+// punycode — RFC 3492, over strings and into buffers the caller
+// already owns.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// WHAT THIS MODULE IS.  `punyboot` is the arithmetic — one integer of
+// state, no buffer, no allocation.  This module is that arithmetic with
+// a string attached, plus the three rules that are about the WHOLE
+// label and that a per-character machine cannot see: where the
+// delimiter is, how long the result may be, and whether an `xn--`
+// label is the one an encoder would have produced.
+//
+// THE DELIMITER IS THE LAST HYPHEN, not the first.  The basic code
+// points are copied out unchanged and a hyphen separates them from the
+// digits — and a label may contain hyphens of its own, so a decoder
+// that scanned from the left would cut `pre-fix` in the wrong place.
+// Scanning from the right is unambiguous because the digit alphabet
+// has no hyphen in it.
+//
+// A LABEL WITH NO HYPHEN IS ALL DIGITS.  `bcher-kva` has a basic part;
+// `4can8pwxg` has none, and the whole label is the encoded deltas.
+// That is the case a decoder written from the prose gets wrong,
+// because the prose describes the delimiter as if it were always
+// there.
+//
+// THIS MODULE DOES NO IDNA.  It encodes and decodes; it does not map,
+// normalise, or check anything about the characters it is handed.
+// `punyidna` is the module that does, and the split is the one RFC
+// 3492 itself makes — punycode is a general bootstring encoding, and
+// IDNA is one application of it.
+
+// The four characters in front of an encoded label: `"xn--"`.
+//
+// "ACE" is the specification's word — ASCII Compatible Encoding — and
+// the prefix is what tells a resolver that a label is punycode rather
+// than a name that happens to look like it.
+pub fn ace_prefix() -> Str []
+    todo("punycode.ace_prefix")
+
+// Whether a label begins with the ACE prefix, compared without regard
+// to case.
+//
+// Case-insensitively because DNS labels are, and because a name
+// upper-cased for a QR code or a printed page must still be
+// recognisable.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     let a = punycode.is_encoded_label("xn--bcher-kva")
+//     let b = punycode.is_encoded_label("XN--BCHER-KVA")
+//     let c = punycode.is_encoded_label("example")
+//     println("${a} ${b} ${c}")   // true true false
+// ```
+pub fn is_encoded_label(label: Str) -> Bool []
+    todo("punycode.is_encoded_label")
+
+// ── the raw encoding, without the prefix ────────────────────────────
+
+// How many characters `input` encodes to, prefix excluded.
+//
+// Answered without producing them, so a caller can size a buffer
+// exactly.  `PunyOverflow` when the delta arithmetic would pass RFC
+// 3492 § 6.4's bound.
+pub fn encoded_len(input: Str) -> Result<Int, PunyError> []
+    todo("punycode.encoded_len")
+
+// Encode one label's Unicode into punycode, prefix excluded.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     // RFC 3492 § 7.1's German sample, without its prefix.
+//     match punycode.encode("bücher")
+//         Ok(s)  => println(s)   // bcher-kva
+//         Err(e) => println(e.message())
+// ```
+pub fn encode(input: Str) -> Result<Str, PunyError> []
+    todo("punycode.encode")
+
+// Encode into the caller's buffer and answer how many characters were
+// written.
+//
+// The allocation-free path, for a device or for a caller that sized
+// with `encoded_len`.  Nothing here grows anything.
+pub fn encode_into(input: Str, mut dst: Cursor) -> Result<Int, PunyError> []
+    todo("punycode.encode_into")
+
+// How many characters `input` decodes to.
+pub fn decoded_len(input: Str) -> Result<Int, PunyError> []
+    todo("punycode.decoded_len")
+
+// Decode punycode into Unicode, prefix excluded.
+//
+// `PunyBadDigit` for a character that is not base 36, `PunyOverflow`
+// for a delta past the bound, `PunyBadCodePoint` for a delta that names
+// a code point above 0x10FFFF or a surrogate — the check a decoder must
+// make before it writes anything.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     match punycode.decode("bcher-kva")
+//         Ok(s)  => println(s)   // bücher
+//         Err(e) => println(e.message())
+// ```
+pub fn decode(input: Str) -> Result<Str, PunyError> []
+    todo("punycode.decode")
+
+// Decode into the caller's buffer and answer how many characters were
+// written.
+pub fn decode_into(input: Str, mut dst: Cursor) -> Result<Int, PunyError> []
+    todo("punycode.decode_into")
+
+// ── one whole label, prefix and all ─────────────────────────────────
+
+// Encode one label, adding the `xn--` prefix when it is needed.
+//
+// A label with no non-basic characters comes back UNCHANGED and
+// unprefixed, which is what makes an ASCII domain cost nothing.  A
+// label that would exceed 63 characters with the prefix on it is
+// `PunyLabelTooLong`, which is the rule that makes long international
+// labels impossible rather than merely inconvenient.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     match punycode.encode_label("bücher")
+//         Ok(s)  => println(s)   // xn--bcher-kva
+//         Err(e) => println(e.message())
+// ```
+pub fn encode_label(label: Str) -> Result<Str, PunyError> []
+    todo("punycode.encode_label")
+
+// Decode one label, stripping the `xn--` prefix when it is there.
+//
+// A label without the prefix comes back unchanged: it was never
+// punycode, and decoding it would turn a perfectly good ASCII name
+// into something else.
+pub fn decode_label(label: Str) -> Result<Str, PunyError> []
+    todo("punycode.decode_label")
+
+// Whether an `xn--` label is the encoding an encoder would have
+// produced for its own decoded value.
+//
+// UTS #46 requires the round trip, and the reason is comparison: two
+// encodings of one name are two names as far as a DNS resolver or a
+// certificate matcher is concerned, and a resolver has never heard of
+// punycode.  `PunyNotCanonical` is the refusal.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     let ok = punycode.is_canonical("xn--bcher-kva")
+//     println("${ok}")   // true
+// ```
+pub fn is_canonical(label: Str) -> Bool []
+    todo("punycode.is_canonical")
+
+// The position of the delimiter in an encoded label — the LAST hyphen
+// — or -1 when there is none, which means the whole label is digits.
+//
+// Published because it is the rule a decoder written from the prose
+// gets wrong, and because a test that pins it is worth more than a
+// comment.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     let a = punycode.delimiter_at("pre-fix-kva")
+//     let b = punycode.delimiter_at("4can8pwxg")
+//     println("${a} ${b}")   // 7 -1
+// ```
+pub fn delimiter_at(encoded: Str) -> Int []
+    todo("punycode.delimiter_at")

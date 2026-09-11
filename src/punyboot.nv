@@ -1,0 +1,317 @@
+// punyboot — bootstring's parameters and its delta arithmetic, as
+// integers that allocate nothing, hold no buffer, and build for a
+// microcontroller.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// WHY THERE IS A SECOND MODULE.  `punycode` and `punyidna` speak `Str`
+// and `Cursor`, and neither links at `@tier(embedded)`: the embedded
+// runtime defines no `novo_str_*` symbol, so a device that called one
+// would fail at the linker rather than at the type checker.  One
+// host-only function anywhere in a compilation unit is an undefined
+// symbol on a device whether or not the firmware calls it, so the half
+// a device uses is its own module and takes and returns integers.
+//
+// WHAT BOOTSTRING IS.  RFC 3492 defines a family of encodings from a
+// string of arbitrary code points onto a string of BASIC code points,
+// parameterised by six numbers; punycode is that family with one
+// particular set of them.  The algorithm is a generalised
+// variable-length integer: the basic characters are copied out, and
+// then each non-basic character is described by a DELTA — how far to
+// advance a running code point and a running position — written in a
+// number system whose digit thresholds MOVE as the encoding proceeds.
+//
+// THE MOVING THRESHOLD IS THE WHOLE TRICK, and `adapt` is it.  After
+// each delta the bias is recomputed from how large that delta was, so
+// that a string whose characters are close together spends fewer
+// digits per character than one whose characters are scattered.  A
+// Chinese label and a Greek label both come out short, and neither
+// pays for the other's range.  Everything in this module exists to
+// serve that one function.
+//
+// THE ARITHMETIC OVERFLOWS ON PURPOSE, or rather refuses to: RFC 3492
+// § 6.4 requires an implementation to detect an overflow of the delta
+// accumulator rather than wrap, because a wrapped delta decodes to a
+// different string and a domain name that decodes two ways is a
+// phishing tool.  `overflow_limit` is the bound and `PunyState.bad` is
+// where a decoder says so.
+
+// The six numbers RFC 3492 § 5 fixes for punycode.
+//
+// A `@value` struct, so it lives in the caller's stack frame with no
+// header, no reference count and no allocation.  It is a struct rather
+// than six functions because every one of them is passed together to
+// every other function here, and a caller that mixed a `tmin` from one
+// set with a `base` from another would produce a string nothing can
+// read.
+pub @value
+struct PunyParams
+    // 36: the digit alphabet's size, `a`-`z` and `0`-`9`.
+    base: Int
+    // 1: the smallest a digit threshold may be.
+    tmin: Int
+    // 26: the largest.
+    tmax: Int
+    // 38: the bias skew.
+    skew: Int
+    // 700: the damping applied to the FIRST delta only, which is what
+    // keeps one early outlier from ruining the bias for everything
+    // after it.
+    damp: Int
+    // 72: the bias the encoding starts from.
+    initial_bias: Int
+    // 128: the code point the running `n` starts from, which is the
+    // first non-basic one.
+    initial_n: Int
+
+// The parameters punycode uses.
+//
+// ```novo
+// use punyboot
+//
+// fn main() [io]
+//     println("${punyboot.params().base}")   // 36
+// ```
+pub fn params() -> PunyParams []
+    todo("punyboot.params")
+
+// The delimiter that separates the basic code points from the encoded
+// deltas: `-`, which is 45.
+//
+// The LAST one in the string, not the first — a label may hold hyphens
+// of its own, and a decoder that scanned from the left would cut a
+// name in the wrong place.  `punycode.decode` is where that rule is
+// applied.
+pub fn delimiter() -> Int []
+    todo("punyboot.delimiter")
+
+// Whether a code point is basic: below 128.
+//
+// The whole of what "basic" means in RFC 3492, and the reason an ASCII
+// label encodes to itself.
+pub fn is_basic(cp: Int) -> Bool []
+    todo("punyboot.is_basic")
+
+// The value of a digit character, `0 ..= 35`, or -1 for anything that
+// is not one.
+//
+// `a`-`z` and `A`-`Z` are 0 to 25 — the case is not significant, which
+// is what lets a punycode label survive being upper-cased for a QR
+// code — and `0`-`9` are 26 to 35.
+//
+// ```novo
+// use punyboot
+//
+// fn main() [io]
+//     let a = punyboot.digit_value(97)
+//     let z = punyboot.digit_value(48)
+//     println("${a} ${z}")   // 0 26
+// ```
+pub fn digit_value(cp: Int) -> Int []
+    todo("punyboot.digit_value")
+
+// The character a digit value is written as, lower case for `0 ..= 25`
+// and a digit for `26 ..= 35`.
+//
+// -1 for a value outside the range.  Lower case always: an encoder
+// that emitted upper case would produce a second encoding of one
+// label, and `xn--` labels are compared as bytes by DNS resolvers that
+// have never heard of punycode.
+pub fn digit_char(d: Int) -> Int []
+    todo("punyboot.digit_char")
+
+// The digit threshold at position `k` for this bias: `base * k` less
+// the bias, clamped to `tmin` below and `tmax` above.
+//
+// The function that turns the bias into the number system's shape.
+// `k` counts in multiples of `base`, starting at `base` itself.
+pub fn threshold(k: Int, bias: Int, p: PunyParams) -> Int []
+    todo("punyboot.threshold")
+
+// The bias after a delta of `delta` over `numpoints` code points.
+//
+// RFC 3492 § 6.1, transcribed: the delta is divided by `damp` on the
+// first call and by 2 on every later one, then increased by itself
+// divided by `numpoints`, then reduced until it is small enough, and
+// the result is a bias that makes the NEXT delta cheap if it is
+// similar in size.
+//
+// The `firsttime` flag is not a convenience: the damping on the first
+// delta is what stops one early outlier — a single character far from
+// the rest — from making every following character expensive.
+//
+// ```novo
+// use punyboot
+//
+// fn main() [io]
+//     // A delta of `damp` on the first call divides to 1, grows to 2,
+//     // and lands on `36 * 2 / (2 + 38)`.
+//     let p = punyboot.params()
+//     println("${punyboot.adapt(p.damp, 1, true, p)}")   // 1
+// ```
+pub fn adapt(delta: Int, numpoints: Int, firsttime: Bool, p: PunyParams) -> Int []
+    todo("punyboot.adapt")
+
+// The largest delta accumulator RFC 3492 § 6.4 allows before an
+// implementation must refuse.
+//
+// A wrapped delta decodes to a different string, and a domain name
+// that decodes two ways is a phishing tool — so the bound is checked
+// rather than trusted to the machine's arithmetic.
+pub fn overflow_limit() -> Int []
+    todo("punyboot.overflow_limit")
+
+// How many characters a label may hold: 63.
+//
+// A DNS label's own limit, and the one that makes `xn--` expensive: the
+// four-character prefix comes out of the same sixty-three.
+pub fn max_label_len() -> Int []
+    todo("punyboot.max_label_len")
+
+// How many characters a domain name may hold: 253.
+//
+// The 255-octet DNS limit less the root label's length byte and the
+// trailing zero, which is the number every implementation actually
+// checks.
+pub fn max_domain_len() -> Int []
+    todo("punyboot.max_domain_len")
+
+// How many characters the ACE prefix occupies: 4, for `xn--`.
+pub fn prefix_len() -> Int []
+    todo("punyboot.prefix_len")
+
+// ── the encoder's state, in registers ───────────────────────────────
+
+// A bootstring encode or decode in progress.
+//
+// A `@value` struct, so a device encoding a label owns forty bytes of
+// its own frame and nothing else.  `n` is the running code point,
+// `delta` the accumulator, `bias` the current bias, `h` how many code
+// points have been handled, and `first` whether the next adaptation is
+// the damped one.  `bad` is set when the delta accumulator passed
+// `overflow_limit`, which is the refusal RFC 3492 § 6.4 requires.
+pub @value
+struct PunyState
+    n: Int
+    delta: Int
+    bias: Int
+    h: Int
+    first: Bool
+    bad: Bool
+
+// A fresh state, for a label whose basic code points have already been
+// copied out.
+//
+// `basic_count` is how many of them there were, which is the `h` the
+// algorithm starts from.
+pub fn state(basic_count: Int, p: PunyParams) -> PunyState []
+    todo("punyboot.state")
+
+// Advance the state past one code point that was not encoded: `delta`
+// increases by one.
+//
+// The inner loop of the encoder's scan, and the place the overflow
+// check bites.
+pub fn skip(s: PunyState, p: PunyParams) -> PunyState []
+    todo("punyboot.skip")
+
+// Advance the running code point to `n`, folding the distance into the
+// delta.
+//
+// What an encoder does between passes: it has found the smallest code
+// point above `n` that the input still holds, and this is the jump.
+pub fn advance_to(s: PunyState, n: Int, p: PunyParams) -> PunyState []
+    todo("punyboot.advance_to")
+
+// What one delta's digits came to: the characters, and whether they
+// were writable.
+//
+// `out` is a fixed sixteen-byte inline array because no delta needs
+// more digits than that at base 36, and a list would be a heap
+// allocation in an interrupt handler.
+pub @value
+struct PunyEmit
+    out: [u8; 16]
+    len: Int
+    ok: Bool
+
+// The digits one delta is written as, at this bias.
+//
+// The generalised variable-length integer of RFC 3492 § 6.3: divide by
+// the moving threshold until what is left fits, least significant
+// digit first.
+pub fn emit_delta(delta: Int, bias: Int, p: PunyParams) -> PunyEmit []
+    todo("punyboot.emit_delta")
+
+// The state after one delta has been written: `h` and `n` advance, the
+// bias adapts, the delta resets.
+//
+// `numpoints` is `h + 1`, which the caller has because it is counting.
+pub fn after_delta(s: PunyState, numpoints: Int, p: PunyParams) -> PunyState []
+    todo("punyboot.after_delta")
+
+// ── the decoder's state, in registers ───────────────────────────────
+
+// One digit consumed on the way to a delta.
+//
+// `w` is the running weight, `k` the position, and `done` is set when
+// the digit was below the threshold and the number is finished.  `bad`
+// is set for a character that is not a digit, or for an accumulator
+// past `overflow_limit`.
+pub @value
+struct PunyDigitScan
+    delta: Int
+    w: Int
+    k: Int
+    done: Bool
+    bad: Bool
+
+// A fresh digit scan, starting from the delta a decoder has so far.
+pub fn digit_scan(delta: Int, p: PunyParams) -> PunyDigitScan []
+    todo("punyboot.digit_scan")
+
+// Feed one character of an encoded delta and answer the scan after it.
+//
+// A character fed to a scan that is already `done` is ignored, because
+// a `@value` function has nowhere to put a refusal and a caller that
+// checks `done` cannot reach the case.
+//
+// ```novo
+// use punyboot
+//
+// fn main() [io]
+//     let p = punyboot.params()
+//     // `a` is digit 0, which at the initial bias is below the first
+//     // threshold and so ends the number.
+//     let d = punyboot.digit_push(punyboot.digit_scan(0, p), 97, p.initial_bias, p)
+//     println("${d.done} ${d.delta}")   // true 0
+// ```
+pub fn digit_push(s: PunyDigitScan, cp: Int, bias: Int, p: PunyParams) -> PunyDigitScan []
+    todo("punyboot.digit_push")
+
+// Where a finished delta puts the running code point and the insertion
+// position.
+//
+// `i` is the index in the output the decoded character goes at and `n`
+// is its code point — the two halves the delta encodes, separated by a
+// division by `h + 1`.
+pub @value
+struct PunyInsertion
+    n: Int
+    i: Int
+    bad: Bool
+
+// The insertion a finished delta names, given the state before it.
+//
+// `numpoints` is `h + 1`.  `bad` is set when the resulting code point
+// is above 0x10FFFF or is a surrogate, which is the check a decoder
+// must make before it writes anything: an unchecked punycode label can
+// name a code point that does not exist.
+pub fn insertion(s: PunyState, numpoints: Int, p: PunyParams) -> PunyInsertion []
+    todo("punyboot.insertion")
+
+// The state after one insertion has been decoded.
+pub fn after_insertion(s: PunyState, ins: PunyInsertion, numpoints: Int,
+                       p: PunyParams) -> PunyState []
+    todo("punyboot.after_insertion")

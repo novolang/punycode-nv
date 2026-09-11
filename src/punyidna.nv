@@ -1,0 +1,361 @@
+// punyidna — UTS #46, which is what "IDNA" means in practice.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// FIVE STEPS, AND NAMING THEM IS HALF THE POINT.  UTS #46's
+// `ToASCII` is: MAP every code point through a table, NORMALISE to NFC,
+// split into labels and VALIDATE each, punycode-ENCODE the ones that
+// need it, and CHECK THE LENGTHS.  A caller that meets a refusal wants
+// to know which of the five said no, and `punyerr.error_step` answers
+// that because the variants are grouped by it.
+//
+// TRANSITIONAL PROCESSING IS DEAD AND THE OPTION REMAINS.  IDNA2003
+// mapped `ß` to `ss` and `ς` to `σ`; IDNA2008 kept them as themselves,
+// so the same name resolves to two different places depending on the
+// vintage of the resolver.  UTS #46 calls the four affected characters
+// DEVIATIONS and gives an option for each behaviour.  Every browser
+// has used NONTRANSITIONAL since 2016, and `nontransitional()` is what
+// a caller should reach for; `transitional()` exists because a program
+// that has to agree with something old needs to be able to say so.
+//
+// THE UNICODE DATA IS THE CALLER'S.  Every function that needs a table
+// takes a `unicode-nv` `UniData`, the same way unicode-nv's own
+// normalisation does.  That is `docs/publishing.md` § How a `core`
+// package takes a stream from its host applied to a table: the 245 KB
+// of normalisation data is a cost a caller decides to pay, and a
+// package that compiled it in would decide for them.  A caller that
+// passes the COMPACT data gets `PunyDataIncomplete` rather than a
+// silently unnormalised name.
+//
+// WHAT THIS IS NOT.  It is not a security check.  UTS #46 says whether
+// a name is well-formed; whether `раypal.com` and `paypal.com` look
+// alike to a person is UTS #39's confusable detection, which is a
+// different specification with a different table, and a caller that
+// assumed this package did it would be wrong in the one case that
+// matters.
+
+use punycode
+use punyerr
+use udata
+
+// What a conversion does and does not check.
+//
+// Six switches, and the README says which combination each well-known
+// consumer uses.
+pub struct PunyIdnaOptions
+    // Whether the four deviation characters are mapped the IDNA2003
+    // way.  False in `nontransitional()`, which is what every browser
+    // has used since 2016.
+    transitional: Bool
+    // Whether an ASCII character outside letters, digits and the
+    // hyphen is disallowed.  STD3 is the host-name rule from 1989, and
+    // the reason `_` is refused in a host name and allowed in a DNS
+    // record.
+    use_std3_ascii_rules: Bool
+    // Whether a label may begin or end with a hyphen, or carry hyphens
+    // in its third and fourth positions.  Browsers turn this OFF, which
+    // is why `xn--` labels and a good deal of deployed naming work at
+    // all.
+    check_hyphens: Bool
+    // Whether RFC 5893's bidi rule is applied to a domain that holds
+    // any right-to-left character.
+    check_bidi: Bool
+    // Whether the CONTEXTJ and CONTEXTO rules are applied to joiners
+    // and to the characters that carry them.
+    check_joiners: Bool
+    // Whether the 63-character label and 253-character domain limits
+    // are enforced.  A caller converting a name for display rather
+    // than for a resolver turns this off.
+    verify_dns_length: Bool
+
+// The processing every browser uses: nontransitional, STD3 off,
+// hyphens unchecked, bidi and joiners checked, lengths verified.
+//
+// ```novo
+// use punyidna
+//
+// fn main() [io]
+//     println("${punyidna.nontransitional().transitional}")   // false
+// ```
+pub fn nontransitional() -> PunyIdnaOptions []
+    todo("punyidna.nontransitional")
+
+// The same with the four deviation characters mapped the IDNA2003
+// way.
+//
+// For a program that has to agree with something old.  `ß` becomes
+// `ss` and `ς` becomes `σ`, which means two different names resolve to
+// one place — and that a name a user typed is not the name that was
+// looked up.
+pub fn transitional() -> PunyIdnaOptions []
+    todo("punyidna.transitional")
+
+// Everything on: STD3, hyphen checks, bidi, joiners, lengths.
+//
+// What a registry validating a name somebody wants to buy would use,
+// and stricter than any resolver.
+pub fn strict() -> PunyIdnaOptions []
+    todo("punyidna.strict")
+
+// What UTS #46's table says about one code point.
+//
+// The five statuses of the IdnaMappingTable, plus the two that depend
+// on `use_std3_ascii_rules` — which are separate values rather than a
+// flag on `PunyDisallowed`, because the distinction is exactly what
+// the option decides.
+pub enum PunyStatus
+    // Allowed, and stands for itself.
+    PunyValid
+    // Allowed, and stands for something else: the mapped sequence.
+    // Most of the table — every upper-case letter, every compatibility
+    // form.
+    PunyMapped
+    // Removed entirely.  Soft hyphen, the variation selectors, and the
+    // zero-width characters that are not joiners.
+    PunyIgnored
+    // One of the four characters IDNA2003 and IDNA2008 disagree about:
+    // `ß`, `ς`, ZERO WIDTH JOINER, ZERO WIDTH NON-JOINER.  Mapped
+    // under `transitional`, valid under `nontransitional`.
+    PunyDeviation
+    // Not allowed in a name at all.
+    PunyDisallowed
+    // Valid when `use_std3_ascii_rules` is off and disallowed when it
+    // is on: `_`, and the other ASCII punctuation.
+    PunyDisallowedStd3Valid
+    // Mapped when `use_std3_ascii_rules` is off and disallowed when it
+    // is on.
+    PunyDisallowedStd3Mapped
+
+// The status's name, for a refusal and for a table dump:
+// `"valid"`, `"mapped"`, `"ignored"`, `"deviation"`, `"disallowed"`,
+// `"disallowed_STD3_valid"`, `"disallowed_STD3_mapped"`.
+//
+// The spellings the IdnaMappingTable itself uses, so a reader can grep
+// the data file with what this prints.
+pub fn status_name(s: PunyStatus) -> Str []
+    todo("punyidna.status_name")
+
+// What the table says about one code point.
+//
+// ```novo
+// use punyidna
+// use udata
+//
+// fn main() [io]
+//     let d = udata.data_full()
+//     println(punyidna.status_name(punyidna.char_status(d, 0x41)))   // mapped
+// ```
+pub fn char_status(d: UniData, cp: Int) -> PunyStatus []
+    todo("punyidna.char_status")
+
+// What one code point maps to under these options: itself, nothing, or
+// a sequence.
+//
+// An empty list for an ignored character.  A deviation maps to itself
+// under `nontransitional` and to its IDNA2003 value under
+// `transitional`, which is the whole of the difference between the
+// two.
+pub fn map_char(d: UniData, cp: Int, o: PunyIdnaOptions) -> [Int] []
+    todo("punyidna.map_char")
+
+// ── the five steps, each on its own ─────────────────────────────────
+
+// Step one and two: map every code point, then normalise to NFC.
+//
+// Published separately because a caller that wants to show a person
+// what a name became needs the mapped form before the labels are
+// split, and because a test that pins the mapping is a test that does
+// not also depend on punycode.
+pub fn map(d: UniData, input: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
+    todo("punyidna.map")
+
+// Step three, for one label: everything UTS #46 § 4.1 requires of a
+// label that has already been mapped and normalised.
+//
+// `None` when the label is valid.  In order: it is in NFC; it does not
+// begin with a combining mark; it does not break the hyphen rules when
+// `check_hyphens` is on; every character is `PunyValid` — or a
+// `PunyDeviation` under `nontransitional`; the bidi rule holds when
+// `check_bidi` is on; the joiner rules hold when `check_joiners` is
+// on.
+pub fn validate_label(d: UniData, label: Str, o: PunyIdnaOptions) -> ?PunyError []
+    todo("punyidna.validate_label")
+
+// RFC 5893's bidi rule, on its own.
+//
+// Six numbered conditions, and `PunyBidiRule` carries which of them
+// failed so that a person can find it in the RFC.  It applies to a
+// label only when the DOMAIN contains a right-to-left character
+// anywhere — which is why it takes the domain's own answer rather than
+// deciding per label, and why `is_bidi_domain` is published beside it.
+pub fn bidi_rule(d: UniData, label: Str) -> ?PunyError []
+    todo("punyidna.bidi_rule")
+
+// Whether a domain contains any right-to-left character, and so
+// whether the bidi rule applies to its labels at all.
+//
+// The scoping decision RFC 5893 makes: a purely left-to-right domain
+// is not subject to the rule, and applying it anyway would refuse
+// perfectly good names.
+pub fn is_bidi_domain(d: UniData, domain: Str) -> Bool []
+    todo("punyidna.is_bidi_domain")
+
+// RFC 5892 Appendix A's CONTEXTJ rules: ZERO WIDTH JOINER and ZERO
+// WIDTH NON-JOINER.
+//
+// Both are invisible and both are necessary — Persian and several
+// Indic scripts need them to render correctly — so they are allowed
+// under a context rule rather than banned.  The rule is that a joiner
+// must follow a virama, or sit between characters whose joining types
+// permit it.
+pub fn contextj_rule(d: UniData, label: Str) -> ?PunyError []
+    todo("punyidna.contextj_rule")
+
+// RFC 5892 Appendix A's CONTEXTO rules.
+//
+// The characters that are allowed only in the company of particular
+// others: MIDDLE DOT between two `l`s (Catalan), the Greek keraia
+// before a Greek letter, the Hebrew geresh after a Hebrew letter,
+// Katakana middle dot in company with Japanese script, and the two
+// Arabic-Indic digit blocks which may not be mixed.
+//
+// UTS #46 leaves this one OPTIONAL where CONTEXTJ is required, and
+// both are under `check_joiners` here rather than under two flags,
+// because a caller that wanted one and not the other has not been
+// observed.
+pub fn contexto_rule(d: UniData, label: Str) -> ?PunyError []
+    todo("punyidna.contexto_rule")
+
+// ── the two conversions ─────────────────────────────────────────────
+
+// A whole domain to its ASCII form: the name a resolver is given.
+//
+// The five steps in order.  A label that needs punycode comes back
+// `xn--`-prefixed; one that does not comes back as it was, which is
+// what makes an ASCII domain cost nothing.
+//
+// ```novo
+// use punyidna
+// use udata
+//
+// fn main() [io]
+//     let d = udata.data_full()
+//     match punyidna.to_ascii(d, "bücher.example", punyidna.nontransitional())
+//         Ok(s)  => println(s)   // xn--bcher-kva.example
+//         Err(e) => println(e.message())
+// ```
+pub fn to_ascii(d: UniData, domain: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
+    todo("punyidna.to_ascii")
+
+// The same, into the caller's buffer.
+//
+// The allocation-free path, and the one url-nv's host parser wants: it
+// already holds the string and is answering spans into it, so a `Str`
+// back would be an allocation for something the caller can already
+// see.
+pub fn to_ascii_into(d: UniData, domain: Str, o: PunyIdnaOptions,
+                     mut dst: Cursor) -> Result<Int, PunyError> []
+    todo("punyidna.to_ascii_into")
+
+// A whole domain to its Unicode form: the name a person is shown.
+//
+// Every `xn--` label is decoded and validated; a label that decodes to
+// something invalid is LEFT AS IT WAS rather than refused, which is
+// what UTS #46 requires — `ToUnicode` never fails, because refusing to
+// display a name is worse than displaying it in its encoded form.
+// `PunyError` is still in the signature for the length and structural
+// refusals that happen before any label is looked at.
+pub fn to_unicode(d: UniData, domain: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
+    todo("punyidna.to_unicode")
+
+// The same, into the caller's buffer.
+pub fn to_unicode_into(d: UniData, domain: Str, o: PunyIdnaOptions,
+                       mut dst: Cursor) -> Result<Int, PunyError> []
+    todo("punyidna.to_unicode_into")
+
+// One label to its ASCII form.
+//
+// For a caller that has already split a domain — a DNS resolver
+// walking a name, a certificate matcher comparing one label against a
+// wildcard.
+pub fn label_to_ascii(d: UniData, label: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
+    todo("punyidna.label_to_ascii")
+
+// One label to its Unicode form.
+pub fn label_to_unicode(d: UniData, label: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
+    todo("punyidna.label_to_unicode")
+
+// ── labels ──────────────────────────────────────────────────────────
+
+// A domain split on `.`, with the separators removed.
+//
+// UTS #46 treats three other characters as full stops — IDEOGRAPHIC
+// FULL STOP, FULLWIDTH FULL STOP, HALFWIDTH IDEOGRAPHIC FULL STOP —
+// and they are mapped to `.` in the mapping step, so a caller that
+// splits BEFORE mapping gets a different answer from one that splits
+// after.  This function splits on `.` alone and the order of the steps
+// is what makes that correct.
+//
+// ```novo
+// use punyidna
+//
+// fn main() [io]
+//     let n = punyidna.split_labels("a.b.c").len()
+//     println("${n}")   // 3
+// ```
+pub fn split_labels(domain: Str) -> [Str] []
+    todo("punyidna.split_labels")
+
+// Labels joined with `.`.
+pub fn join_labels(labels: [Str]) -> Str []
+    todo("punyidna.join_labels")
+
+// How many characters the ASCII form of this domain would occupy.
+//
+// For a caller sizing a buffer before `to_ascii_into`, and for one
+// deciding whether a name will fit before it commits to converting it.
+pub fn ascii_len(d: UniData, domain: Str, o: PunyIdnaOptions) -> Result<Int, PunyError> []
+    todo("punyidna.ascii_len")
+
+// Whether a domain's ASCII form is within the DNS length limits: every
+// label at most 63 characters and the whole name at most 253.
+//
+// A predicate rather than a refusal, for a caller that wants to offer
+// a person a name and say whether it can be registered.
+pub fn fits_dns(d: UniData, domain: Str, o: PunyIdnaOptions) -> Bool []
+    todo("punyidna.fits_dns")
+
+// ── what url-nv asks for ────────────────────────────────────────────
+
+// A URL's host to its ASCII form, ready for a resolver.
+//
+// The one call url-nv's host parser makes, named so that both packages
+// can point at it.  Its `host_problem` refuses a byte above 127 with
+// `E_IDNA` today; with this package it calls `host_to_ascii` on the
+// host span instead and re-runs its own forbidden-byte check on the
+// result, which is exactly what the WHATWG URL standard's host parser
+// does.
+//
+// `nontransitional` with `use_std3_ascii_rules` OFF and `check_hyphens`
+// OFF, which is the combination the WHATWG standard names for a URL —
+// and it is NOT `strict()`, because a URL host is not a registry
+// application and refusing `_` would break a great deal of deployed
+// naming.
+pub fn host_to_ascii(d: UniData, host: Str) -> Result<Str, PunyError> []
+    todo("punyidna.host_to_ascii")
+
+// A URL's host to its display form, for showing a person.
+//
+// The other half of what a browser's address bar does: the resolver
+// gets `host_to_ascii` and the person sees this.  It never fails on a
+// label, for the reason `to_unicode` gives.
+pub fn host_to_unicode(d: UniData, host: Str) -> Result<Str, PunyError> []
+    todo("punyidna.host_to_unicode")
+
+// The options the WHATWG URL standard's host parser uses, as a value.
+//
+// Published so that url-nv does not have to spell the combination out
+// and so that a reader can see it is a decision rather than a default.
+pub fn url_options() -> PunyIdnaOptions []
+    todo("punyidna.url_options")

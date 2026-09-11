@@ -1,0 +1,148 @@
+// punyerr — every way a label or a domain name can refuse to be
+// converted.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// ONE TYPE, BECAUSE THERE IS ONE AUDIENCE.  Unlike a wire codec, this
+// package has no "you asked me to write something illegal" half: a
+// caller hands over a name and gets a name back or a reason, and the
+// reason is the same reason in both directions.  What the variants
+// separate instead is WHICH STEP refused, because UTS #46 is five
+// steps and a person debugging a name that will not resolve needs to
+// know which one.
+//
+// EVERY VARIANT NAMES A LABEL, and most name a position inside it.  A
+// domain is a list of labels and the one that is wrong is almost never
+// the first; a refusal that said only "invalid domain" would send a
+// person to read the whole thing.
+//
+// A REFUSAL IS NOT A SECURITY VERDICT.  These say a name is not
+// well-formed under IDNA, which is a narrower claim than "this name is
+// safe to show a person".  Confusable detection — whether `раypal` and
+// `paypal` look alike — is UTS #39 and is a different specification,
+// and the README says so rather than letting a caller assume this
+// package did it.
+
+// PunyError is why a label or a domain could not be converted.
+pub enum PunyError
+    // A basic-code-point run was longer than a label may be, or the
+    // encoded form came out past 63 characters once the `xn--` prefix
+    // was added.
+    PunyLabelTooLong(label: Str, len: Int)
+    // The whole domain came out past 253 characters.
+    PunyDomainTooLong(len: Int)
+    // A label was empty and was not the trailing root label.  `a..b` is
+    // not a domain name.
+    PunyEmptyLabel(at: Int)
+    // An encoded label's delta accumulator passed the bound RFC 3492
+    // § 6.4 sets.  A wrapped delta decodes to a different string, and a
+    // name that decodes two ways is a phishing tool.
+    PunyOverflow(label: Str, at: Int)
+    // A character in the encoded part of a label was not a
+    // base-36 digit.
+    PunyBadDigit(label: Str, at: Int, ch: Int)
+    // An encoded label's basic part held a character that is not a
+    // basic code point, which a punycode encoder cannot have produced.
+    PunyNotBasic(label: Str, at: Int, ch: Int)
+    // A decoded delta named a code point above 0x10FFFF, or a
+    // surrogate.  An unchecked punycode label can name a code point
+    // that does not exist.
+    PunyBadCodePoint(label: Str, cp: Int)
+    // An `xn--` label whose encoded form is not the one an encoder
+    // would produce for its own decoded value.  UTS #46 requires the
+    // round trip, because two encodings of one name are two names as
+    // far as a comparison is concerned.
+    PunyNotCanonical(label: Str)
+    // An `xn--` label that decoded to something with no non-basic
+    // characters in it at all, which an encoder would never have
+    // encoded.
+    PunyPointlessEncoding(label: Str)
+    // A code point UTS #46 marks disallowed appeared in a label.
+    PunyDisallowedChar(label: Str, at: Int, cp: Int)
+    // A code point that is disallowed only because
+    // `use_std3_ascii_rules` is on: an ASCII character outside
+    // letters, digits and the hyphen.
+    PunyDisallowedStd3(label: Str, at: Int, cp: Int)
+    // A label that is not in Unicode Normalization Form C after the
+    // mapping step.  UTS #46 requires it, and a caller that skipped
+    // normalisation would produce two encodings of one name.
+    PunyNotNormalized(label: Str)
+    // A label beginning or ending with a hyphen, or carrying hyphens
+    // in its third and fourth positions when it is not an `xn--`
+    // label.  The `check_hyphens` option turns this off, which is what
+    // browsers do.
+    PunyBadHyphen(label: Str, at: Int)
+    // A label beginning with a combining mark, which UTS #46 forbids
+    // regardless of any option.
+    PunyLeadingCombiningMark(label: Str, cp: Int)
+    // A label that breaks RFC 5893's bidi rule: a right-to-left label
+    // in a domain that has one must begin and end with characters of
+    // the right directionality, and must not mix certain classes.
+    // `which` names the numbered condition of § 2 that failed, so a
+    // person can find it.
+    PunyBidiRule(label: Str, which: Int)
+    // A ZERO WIDTH JOINER or NON-JOINER that did not meet the
+    // contextual rule RFC 5892 Appendix A gives it: a joiner must
+    // follow a virama or sit between characters of the right joining
+    // types.
+    PunyContextJ(label: Str, at: Int, cp: Int)
+    // A character with a CONTEXTO rule — a middle dot, a Greek
+    // keraia, an Arabic-Indic digit mixed with an extended one — that
+    // did not meet it.
+    PunyContextO(label: Str, at: Int, cp: Int)
+    // A `UniData` was handed over that does not carry the tables this
+    // step needs.  unicode-nv's compact data omits normalisation and
+    // case mapping, and a caller that passed it here would get a
+    // silently unnormalised name; this is that refusal instead.
+    PunyDataIncomplete(what: Str)
+
+// message renders the refusal as one line of prose, with the label in
+// it.
+//
+// `Result<_, PunyError>` requires this impl: SPEC § 3.4 admits a
+// `Result` error type only if it implements `Error`.
+impl Error for PunyError
+    // Answer the one-line report: which label, what was wrong, and
+    // where in it when there is a where.
+    //
+    // ```novo
+    // use punyerr
+    //
+    // fn main() [io]
+    //     let e = PunyEmptyLabel(at: 1)
+    //     println(e.message())
+    //     // punycode: empty label at position 1 — a..b is not a domain
+    // ```
+    fn message(self) -> Str
+        todo("punyerr.PunyError.message")
+
+// The label a refusal is about, or `""` for the two that are about a
+// whole domain.
+pub fn error_label(e: PunyError) -> Str []
+    todo("punyerr.error_label")
+
+// The position inside the label a refusal names, or -1 when it has
+// none.
+//
+// -1 rather than 0, because position 0 exists and a caller that
+// printed it would have been told something false.
+//
+// ```novo
+// use punyerr
+//
+// fn main() [io]
+//     let a = punyerr.error_offset(PunyBadDigit(label: "xn--a", at: 5, ch: 33))
+//     let b = punyerr.error_offset(PunyNotCanonical(label: "xn--a"))
+//     println("${a} ${b}")   // 5 -1
+// ```
+pub fn error_offset(e: PunyError) -> Int []
+    todo("punyerr.error_offset")
+
+// Which UTS #46 step refused: `"decode"`, `"map"`, `"normalize"`,
+// `"validate"`, `"length"`.
+//
+// The one thing a person debugging a name that will not resolve needs
+// first, and the reason the variants are grouped the way they are.
+pub fn error_step(e: PunyError) -> Str []
+    todo("punyerr.error_step")

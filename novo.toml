@@ -1,0 +1,56 @@
+[package]
+name        = "punycode-nv"
+version     = "0.0.1"
+description = "RFC 3492 punycode and UTS #46 IDNA: the bootstring parameters as a @value and the delta arithmetic in registers, encode and decode into a buffer the caller already owns, and ToASCII and ToUnicode over a whole domain with the mapping, the normalisation, the label length rules and the bidi and contextual checks each named and scoped.  Interface only — every body is a todo()."
+license     = "Apache-2.0"
+
+# An INTERFACE release: every `pub fn` body is a `todo()`, so the
+# signatures and the effect rows are published and nothing is
+# implemented.  `novo pkg publish` recognises the shape and requires
+# both the draft stability and the 0.0.x version; the first
+# implementation is the 0.1.0 published over it.
+stability   = "draft"
+
+# `core`: arithmetic over characters the caller already holds.  No
+# function declares an effect, nothing is read and nothing is written.
+# The Unicode tables IDNA needs arrive as a `UniData` the caller names,
+# which is unicode-nv's own arrangement and the reason this package has
+# no data of its own.
+#
+# It carries `tests/embedded_probe.nv`, so the device claim is BUILT —
+# for `punyboot`, the half a microcontroller can use.  The consumer is
+# a device with a display: showing a domain name to a person is the one
+# security decision firmware cannot delegate to its host, because a
+# name rendered on the host is a name the host could have replaced.
+layer       = "core"
+
+category    = "encoding"
+
+tags = ["punycode", "idna", "uts46", "rfc3492", "domain-names", "unicode", "embedded"]
+repository  = "https://github.com/novolang/punycode-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.8.9"
+
+# A library: no `main`, so `novo pkg build` type-checks and
+# effect-checks every module under `src/` and writes no binary.
+
+[docs.pages]
+"README.md" = "The four bytes in front of an international domain name"
+
+[dependencies]
+# unicode-nv supplies exactly three things and the README names them:
+# NFC normalisation (`unorm.normalize`), the general category of a code
+# point (`uclass.category`), and the `UniData` the two of them read.
+# UTS #46 is defined in Unicode terms throughout — its mapping table is
+# derived from the Unicode character database, and its validity
+# criteria are stated as category and property tests — so a package
+# that carried its own table would be carrying a second copy of
+# unicode-nv's data that ages separately.
+#
+# `punyboot` uses none of it, which is what keeps the device claim.
+unicode-nv = "^0.0.1"
+
+# NOT url-nv, and the direction is worth stating: url-nv is this
+# package's CONSUMER rather than its dependency.  Its host parser
+# refuses a byte above 127 with `IdnaUnsupported` today, and the README
+# says exactly which call here replaces that refusal.
