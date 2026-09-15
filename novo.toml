@@ -1,6 +1,6 @@
 [package]
 name        = "punycode-nv"
-version     = "0.0.1"
+version     = "0.0.2"
 description = "RFC 3492 punycode and UTS #46 IDNA: the bootstring parameters as a @value and the delta arithmetic in registers, encode and decode into a buffer the caller already owns, and ToASCII and ToUnicode over a whole domain with the mapping, the normalisation, the label length rules and the bidi and contextual checks each named and scoped.  Interface only — every body is a todo()."
 license     = "Apache-2.0"
 

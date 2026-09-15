@@ -1,217 +1,293 @@
 # punycode-nv
 
-**Status: NOT IMPLEMENTED — interface only.**
+A domain name may hold any character a person writes, but the Domain
+Name System carries only letters, digits and the hyphen. Punycode is the
+encoding that bridges the two: `bücher.example` travels as
+`xn--bcher-kva.example`, and is turned back for a person to read. The
+encoding is
+[RFC 3492](https://www.rfc-editor.org/rfc/rfc3492), and the rules around
+it are [UTS #46](https://www.unicode.org/reports/tr46/), Unicode IDNA
+Compatibility Processing. This package implements both, over
+[unicode-nv](https://novo-lang.org/packages/unicode-nv)'s tables.
 
-Every public function below is published with its signature and its
-effect row, and every body is `todo()`.  Installing this package works;
-calling it panics with `not implemented`.
+**Status: NOT IMPLEMENTED — interface only.** Every function is declared
+with its full signature, but every body is a `todo()` that panics when
+called. The package is published so its design can be reviewed and
+depended on before it is implemented. Version 0.1.0 will be the first
+working release.
 
-## What this is
+## What punycode is
 
-The four characters in front of an international domain name, and
-everything behind them.
+A domain name is a sequence of **labels** separated by full stops. Each
+label is encoded on its own. A label is **basic** when every character
+in it is below code point 128, and a basic label is left alone.
 
-`bücher.example` cannot travel through DNS, which speaks a
-thirty-seven-character alphabet from 1987.  So it is rewritten as
-`xn--bcher-kva.example` — the basic characters kept, the rest described
-by a run of base-36 digits — and rewritten back for a person to read.
-RFC 3492 is the rewriting; UTS #46 is everything around it, which is
-where the difficulty actually lives.
+Any other label is rewritten. Its basic characters are copied out first,
+then a hyphen, then a run of digits describing the rest. The rewritten
+label is marked with the prefix `xn--`, which is called the ACE prefix,
+for ASCII Compatible Encoding.
 
-Four surfaces, and a reader should know which one they are on.
+The digits are base 36: the letters `a` to `z`, which are case
+insensitive, and then `0` to `9`. They spell a sequence of **deltas**.
+Each delta says how far to advance a running code point and a running
+position, which together name the next character to insert and where it
+goes. RFC 3492 calls the general scheme **bootstring**, and punycode is
+bootstring with the six parameters in the table below.
 
-| surface | module | reach for it when |
-| --- | --- | --- |
-| the **arithmetic** | `punyboot` | you are on a device |
-| the **codec** | `punycode` | you have one label and want the other form |
-| the **processing** | `punyidna` | you have a domain name |
-| the **refusals** | `punyerr` | you are reporting why a name failed |
+The digit thresholds move as the encoding proceeds. After each delta the
+**bias** is recomputed from how large that delta was, so a label whose
+characters are close together spends fewer digits per character than one
+whose characters are scattered. A Chinese label and a Greek label both
+come out short, and neither pays for the other's range. The first
+adaptation is damped, so that one early outlier does not make every
+following character expensive.
 
-## Adding it, and checking it
+RFC 3492 is only the rewriting. Deciding which characters may appear at
+all, mapping upper case to lower, normalising, and checking the rules
+that apply to scripts written right to left is UTS #46, and that is
+where most of the difficulty is. UTS #46 names two vintages of the
+processing. **Nontransitional** processing is what every browser has
+used since 2016. **Transitional** processing maps four **deviation**
+characters the older IDNA2003 way.
 
-```bash
-novo pkg add punycode-nv       # into your novo.toml
-novo pkg build                 # type- and effect-check the package
-novo test --isolate tests/punycode_tests.nv
+| Quantity | Value |
+| --- | --- |
+| Digit alphabet size (`base`) | 36 |
+| Smallest digit threshold (`tmin`) | 1 |
+| Largest digit threshold (`tmax`) | 26 |
+| Bias skew (`skew`) | 38 |
+| Damping on the first delta (`damp`) | 700 |
+| Starting bias (`initial_bias`) | 72 |
+| Starting code point (`initial_n`) | 128 |
+| Delimiter | `-`, ASCII 45 |
+| ACE prefix | `xn--`, 4 characters |
+| Longest label | 63 characters |
+| Longest domain name | 253 characters |
+| Highest code point a delta may name | `0x10FFFF` |
+
+## Install
+
+```
+novo pkg add punycode-nv
 ```
 
-`novo test` is red today and that is the point of the release: all
-forty-nine assertions fail with `not implemented: <module>.<fn>`.  They
-turn green one at a time as bodies land.
-
-## The one example that will work
+## Example
 
 ```novo
 use punyidna
 use udata
 
 fn main() [io]
+    // The Unicode tables. IDNA needs normalisation and character
+    // categories, so the full data is required and the compact set is
+    // refused.
     let d = udata.data_full()
+
+    // One domain name to the form a resolver takes. The options are the
+    // processing every browser uses.
     match punyidna.to_ascii(d, "bücher.example", punyidna.nontransitional())
-        Ok(s)  => println(s)   // xn--bcher-kva.example
+        // xn--bcher-kva.example
+        Ok(s)  => println(s)
         Err(e) => println(e.message())
 ```
 
-## The load-bearing interface
+Build and test with `novo pkg build` and `novo test`. Today `novo test`
+fails on purpose: every test reaches a `not implemented: <module>.<fn>`
+panic. The tests are the specification the implementation will have to
+satisfy.
 
-`punyboot.adapt(delta, numpoints, firsttime, params) -> Int`.
+## What the package contains
 
-Punycode is a generalised variable-length integer whose DIGIT
-THRESHOLDS MOVE as the encoding proceeds, and `adapt` is what moves
-them.  After each delta the bias is recomputed from how large that
-delta was, so a string whose characters are close together spends fewer
-digits per character than one whose characters are scattered — and a
-Chinese label and a Greek label both come out short without either
-paying for the other's range.
+| Module | Contents |
+| --- | --- |
+| `punyboot` | The six parameters and the delta arithmetic as integers: the digit alphabet, the moving threshold, the adaptation, the limits, and the encode and decode steps. |
+| `punycode` | RFC 3492 over one label: encode, decode, the ACE prefix, the delimiter rule, the canonical round trip, and the two size questions. |
+| `punyidna` | UTS #46 over a whole domain: the option sets, the mapping table's statuses, the validity rules, the bidi and joiner checks, and the two conversions in both directions. |
+| `punyerr` | The eighteen refusals, each naming the label it is about, and the accessors that pull the label, the offset and the step out of one. |
 
-Everything else in `punyboot` exists to serve it: `threshold` turns the
-bias into the number system's shape, `emit_delta` and `digit_push` walk
-that shape in each direction, and `PunyState` is the five integers the
-walk needs.  The `firsttime` flag is not a convenience — the damping on
-the first delta is what stops one early outlier from making every
-following character expensive.
+## How to choose an entry point
 
-## The device claim is built
+**`punyidna.to_ascii` and `punyidna.to_unicode` take a whole domain
+name.** They map, normalise, split into labels, encode or decode each
+one, and apply the validity rules. This is the call for a program that
+has a name a person typed.
 
-`tests/embedded_probe.nv` compiles `punyboot` to a Cortex-M4 ELF for
-`--target=nrf52-qemu`, and the consumer that makes it worth having is a
-device with a display.
+**`punyidna.host_to_ascii` and `host_to_unicode` are the same for a URL
+host.** They use `punyidna.url_options`, which is the combination the
+WHATWG URL standard names.
 
-**Showing a domain name to a person is the one security decision
-firmware cannot delegate to its host**, because a name rendered on the
-host is a name the host could have replaced.  A payment terminal
-showing where a transaction is going, or a device confirming what it is
-pairing with, has to decode `xn--` itself — and it has a few kilobytes
-of RAM to do it in.  `punyboot` is five integers of state and no
-buffer, so it does.
+**`punycode.encode` and `punycode.decode` take one label and do no
+checking.** Reach for them when you are implementing something other
+than a domain name, or when the checking has already happened.
 
-`punycode`, `punyidna` and `punyerr` are deliberately outside the
-probe: they speak `Str` and `Cursor`, the embedded runtime defines
-neither, and one host-only function anywhere in a compilation unit is
-an undefined symbol at embedded link time whether or not the firmware
-calls it.  `punyidna` also needs unicode-nv's tables, which are
-hundreds of kilobytes and are not going on a device at all — so the
-device half decodes and displays, and the validity rules stay on the
-host that can afford them.
+**`punyboot` is the arithmetic for firmware.** It takes and answers
+integers, and the caller drives the loop. See "Running on a
+microcontroller".
 
-## Which call url-nv would make
+**The `*_into` calls write into a `Cursor` you already own.**
+`punyidna.ascii_len` sizes the destination first. A parser that answers
+spans into a string it already holds wants these.
 
-`orbit/url-nv`'s host parser refuses a non-ASCII host today.  Its
-`uri.nv` says so in its own header — *"No IDNA and no punycode: a host
-with a byte above 127 is refused with `IdnaUnsupported` rather than
-guessed at"* — and `host_problem` is where it happens: the scan over
-the host span answers `E_IDNA` for the first byte at or above 128.
+## The rules a user needs
 
-The call that replaces that refusal is
+1. **The delimiter is the last hyphen in the label.** A label may hold
+   hyphens of its own, and the digit alphabet has no hyphen in it. A
+   decoder that scanned from the left would cut `pre-fix-kva` in the
+   wrong place. RFC 3492 section 6.2 is the decoding procedure.
+2. **A label with no hyphen is all digits.** It has no basic characters
+   at all. `bcher-kva` has a basic part and `4can8pwxg` does not.
+3. **An all-basic string encodes with a bare delimiter on the end.**
+   RFC 3492 section 7.1, case (S): `-> $1.00 <-` becomes
+   `-> $1.00 <--`.
+4. **A delta that passes the overflow bound is refused, not wrapped.**
+   RFC 3492 section 6.4 requires the check. A wrapped delta decodes to a
+   different string, and a name that decodes two ways is a phishing
+   tool. `punyboot.overflow_limit` is the bound and `PunyOverflow` is
+   the refusal.
+5. **An `xn--` label must be the encoding an encoder would have
+   produced.** UTS #46 requires the round trip, because two encodings of
+   one name are two names to any comparison. `PunyNotCanonical` and
+   `PunyPointlessEncoding` are the two ways a label fails it.
+6. **An encoder writes lower case only.** Digit characters are case
+   insensitive on the way in, and DNS resolvers compare `xn--` labels as
+   bytes.
+7. **`ToUnicode` never refuses a label.** A label that decodes to
+   something invalid is left in its encoded form, because refusing to
+   display a name is worse than displaying it encoded. The `Result` in
+   the signature is for the length and structural refusals that happen
+   before any label is read.
+8. **`ß` resolves to two different places.** UTS #46 calls it a
+   deviation. `faß.de` is `xn--fa-hia.de` under nontransitional
+   processing and `fass.de` under transitional. Reach for
+   `punyidna.nontransitional`. `punyidna.transitional` is for a program
+   that must agree with something older.
+9. **The Unicode tables are the caller's argument.** Every function that
+   needs one takes a `UniData`. The full data is hundreds of kilobytes,
+   and a package that compiled it in would decide that cost for the
+   caller. The compact set is refused with `PunyDataIncomplete` rather
+   than producing a silently unnormalised name.
+10. **Split the domain after mapping, not before.** UTS #46 maps three
+    other characters to the full stop, among them IDEOGRAPHIC FULL
+    STOP. `punyidna.split_labels` splits on `.` alone, which is correct
+    only in that order.
+11. **The option set is part of the answer.** `nontransitional` is what
+    browsers use, `strict` is what a registry checking a name for sale
+    would use, and `url_options` turns the STD3 ASCII rules and the
+    hyphen checks off, as the WHATWG URL standard requires. The
+    underscore in a host name is the case those two options decide.
+12. **The bidi rule applies to a whole domain.** RFC 5893 asks whether
+    any label holds a right-to-left character, and applies its
+    conditions to every label if one does. `punyidna.is_bidi_domain`
+    answers the question, and `PunyBidiRule` names the numbered
+    condition that failed.
+13. **A label may not begin with a combining mark.** UTS #46 forbids it
+    whatever the options say.
+14. **The 63-character label limit includes the `xn--` prefix.** So does
+    the 253-character domain limit. `punyidna.fits_dns` and
+    `punyidna.ascii_len` answer before a caller commits, and
+    `verify_dns_length` is the option that turns the check off for a
+    name being converted only for display.
 
-```novo norun:pseudo
-punyidna.host_to_ascii(d, host) -> Result<Str, PunyError>
+## Running on a microcontroller
+
+novo-lang lets a package state which of its modules can run on a device
+with no heap allocator, and the compiler checks that claim on every
+build. Here the claim covers `punyboot` and nothing else. It takes and
+answers `Int` and `Bool`, its state is five integers, and it holds no
+buffer.
+
+`tests/embedded_probe.nv` is that claim as a program that either builds
+or does not. It builds today:
+
+```bash
+novo build --target=nrf52-qemu tests/embedded_probe.nv
 ```
 
-and the sequence around it is the WHATWG URL standard's own host
-parser: run `host_to_ascii` over the host span, then re-run url-nv's
-existing forbidden-byte check on the ASCII result, because IDNA can
-produce a character the URL grammar still refuses.  `E_IDNA` stops
-being a refusal and becomes a conversion, and `UrlError.IdnaUnsupported`
-is replaced by whichever `PunyError` the conversion answered.
+The probe produces a Cortex-M4 executable that reads the parameters,
+runs the threshold and the adaptation, and walks a delta in each
+direction. It builds and it is not run: every function it calls is a
+`todo()` today.
 
-Two details that decide whether the two packages fit:
+The consumer for this is a device with a display. Showing a domain name
+to a person is a decision firmware cannot delegate to its host, because
+a name rendered on the host is a name the host could have replaced. A
+payment terminal showing where a transaction is going has to decode
+`xn--` itself, in a few kilobytes of memory.
 
-**The options are not `strict()`.**  `punyidna.url_options()` is
-nontransitional with `use_std3_ascii_rules` OFF and `check_hyphens`
-OFF, which is the combination the WHATWG standard names — a URL host is
-not a registry application, and refusing `_` would break a great deal
-of deployed naming.  It is published as a value rather than left for
-url-nv to assemble, so that the decision is visible in one place.
+**A device cannot use `punycode`, `punyidna` or `punyerr`.** They speak
+`Str` and `Cursor`, and the embedded runtime defines neither. One
+host-only function anywhere in a compilation unit is an undefined symbol
+at link time on a device, whether or not the firmware calls it.
+`punyidna` also needs the Unicode tables, which are hundreds of
+kilobytes. A device decodes and displays; the validity rules stay on the
+host that can afford them.
 
-**`to_ascii_into` exists for url-nv specifically.**  That package's
-whole design is spans into a string the caller already holds and
-allocates nothing in the parse; a `Str` back would be an allocation for
-something the caller can already see.  The buffer form is what a
-span-based parser wants, and `ascii_len` is how it sizes one first.
+## What is not included
 
-## Five things a wrong implementation gets wrong quietly
+- **Confusable detection.** Whether `раypal.com` and `paypal.com` look
+  alike to a person is UTS #39, a different specification with a
+  different table. This package says whether a name is well-formed under
+  IDNA, which is a narrower claim than whether it is safe to show.
+- **Registry policy.** Whether a particular script may be mixed with
+  another under a particular top-level domain is that registry's rule,
+  and there are thousands of them.
+- **The Unicode tables themselves.** They come from unicode-nv as an
+  argument. See rule 9.
+- **Name resolution.** This package converts a name. Looking it up is
+  [dns-codec-nv](https://novo-lang.org/packages/dns-codec-nv) and the
+  standard library's networking.
+- **IDNA2008's own protocol document.** The processing here is UTS #46,
+  which is what browsers implement.
 
-Each is a test in `tests/punycode_tests.nv`.
+## Related packages
 
-**The delimiter is the LAST hyphen.**  A label may hold hyphens of its
-own, so a decoder that scanned from the left cuts `pre-fix-kva` in the
-wrong place.  Scanning from the right is unambiguous because the digit
-alphabet has no hyphen in it.
+- [unicode-nv](https://novo-lang.org/packages/unicode-nv) supplies the
+  three things this package needs: NFC normalisation, the general
+  category of a code point, and the `UniData` both read. It is this
+  package's only dependency.
+- [url-nv](https://novo-lang.org/packages/url-nv) parses URLs and today
+  refuses a host with a byte above 127. `punyidna.host_to_ascii` with
+  `punyidna.url_options` is the call that replaces that refusal, and
+  `to_ascii_into` is the form its span-based parser wants.
+- [dns-codec-nv](https://novo-lang.org/packages/dns-codec-nv) writes the
+  wire format a resolver sends, over the ASCII names this package
+  produces.
+- [base64-nv](https://novo-lang.org/packages/base64-nv) is the other
+  text encoding of non-text data on the registry, with a fixed alphabet
+  and no adaptation.
 
-**A label with no hyphen is entirely digits.**  `bcher-kva` has a basic
-part; `4can8pwxg` has none.  The prose describes the delimiter as if it
-were always there, and a decoder written from the prose gets this one
-wrong.
+## Tests
 
-**An all-ASCII string ends in a bare delimiter.**  RFC 3492 § 7.1's
-case (S): `-> $1.00 <-` encodes to `-> $1.00 <--`, with nothing after
-the hyphen.
+```bash
+novo test tests/punycode_tests.nv      # 49 tests
+```
 
-**`ß` resolves to two different places.**  UTS #46 calls it a
-DEVIATION: IDNA2003 mapped it to `ss`, IDNA2008 kept it, so `faß.de` is
-`xn--fa-hia.de` under the processing every browser has used since 2016
-and `fass.de` under the one from 2003.  `nontransitional()` is what a
-caller should reach for; `transitional()` exists because a program that
-has to agree with something old needs to be able to say so.
+Every vector is from RFC 3492 or UTS #46: the six parameters from
+section 5, `adapt` from section 6.1, the threshold clamp from section
+6.2, the sample strings from section 7.1, and UTS #46's own `faß.de`
+deviation example. The implementations to check a port against are the
+`idna` crate in Rust and Python's `idna` package.
 
-**`ToUnicode` never fails on a label.**  A label that decodes to
-something invalid is left as it was rather than refused, because
-refusing to display a name is worse than displaying it in its encoded
-form.  The `Result` in the signature is for the length and structural
-refusals that happen before any label is looked at.
+The suite asserts that the parameters are the specification's own, that
+the first adaptation is damped and every later one halved, that a delta
+writes its digits least significant first, that the German sample
+encodes to the string everyone cites, that an all-ASCII string ends in a
+bare delimiter, that the delimiter is the last hyphen, that the round
+trip is what makes a label canonical, that the deviation example
+resolves to two different places, that an empty label is not a domain,
+that a label may not begin with a combining mark, that the STD3 and
+hyphen options are what decide an underscore, that the bidi rule applies
+only to a domain that has a right-to-left character, that a compact
+`UniData` is refused, and that each refusal names its label and its
+step.
 
-## What this is not
+The tests compile today and fail at run, each on the `not implemented`
+panic that is its body. That is the expected state of an interface
+release. They turn green one at a time as bodies land.
 
-**It is not a security check.**  UTS #46 says whether a name is
-well-formed under IDNA.  Whether `раypal.com` and `paypal.com` look
-alike to a person is UTS #39's confusable detection — a different
-specification with a different table — and a caller that assumed this
-package did it would be wrong in the one case that matters.  A registry
-or a browser that wants that check needs a package that does not exist
-on the grid yet.
+## Implementation status
 
-**It does not fetch the Unicode data.**  Every function that needs a
-table takes unicode-nv's `UniData`, the same way that package's own
-normalisation does: the 245 KB of normalisation data is a cost a caller
-decides to pay, and a package that compiled it in would decide for
-them.  A caller that passes the COMPACT data gets `PunyDataIncomplete`
-rather than a silently unnormalised name.
-
-**It does not know about registry policy.**  Whether a particular
-script may be mixed with another in a particular top-level domain is
-that registry's rule, and there are a thousand of them.
-
-## The layer, and why
-
-`core`.  Everything here is arithmetic over characters the caller
-already holds, and no function declares an effect: nothing is read,
-nothing is written, and the Unicode tables arrive as an argument.
-
-unicode-nv supplies exactly three things — NFC normalisation
-(`unorm.normalize`), the general category of a code point
-(`uclass.category`), and the `UniData` the two of them read.  UTS #46
-is defined in Unicode terms throughout: its mapping table is derived
-from the character database and its validity criteria are stated as
-category and property tests, so a package that carried its own table
-would be carrying a second copy of unicode-nv's data that ages
-separately.  `punyboot` uses none of it, which is what keeps the device
-claim.
-
-## The reference implementation
-
-RFC 3492 for the encoding and UTS #46 for the processing, with the
-`idna` crate (Rust, MIT / Apache-2.0) and Python's `idna` package (BSD)
-as the implementations to check against.  Every vector in
-`tests/punycode_tests.nv` is from one of those documents — the six
-parameters from § 5, `adapt` from § 6.1, the threshold clamp from
-§ 6.2, the sample strings from § 7.1, and UTS #46's own `faß.de`
-deviation example — so a reader can check the port against the
-specification rather than against this package.
-
-## Status
-
-| function | implemented |
+| Item | Implemented |
 | --- | --- |
 | `punyboot.params`, `.delimiter`, `.is_basic` | no |
 | `punyboot.digit_value`, `.digit_char`, `.threshold`, `.adapt` | no |
@@ -230,4 +306,10 @@ specification rather than against this package.
 | `punyidna.label_to_ascii`, `.label_to_unicode` | no |
 | `punyidna.split_labels`, `.join_labels`, `.ascii_len`, `.fits_dns` | no |
 | `punyidna.host_to_ascii`, `.host_to_unicode` | no |
-| `punyerr.error_label`, `.error_offset`, `.error_step`, the `message` impl | no |
+| `punyerr.error_label`, `.error_offset`, `.error_step`, `PunyError.message` | no |
+
+## Licence
+
+Apache-2.0. See `LICENSE`.
+
+<!-- docs/writing-a-readme.md is the style guide for this page. -->
