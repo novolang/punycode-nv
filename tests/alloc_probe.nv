@@ -1,0 +1,30 @@
+// tests/alloc_probe.nv — a program that reaches every function in
+// `punyboot`, so the emitted LLVM can be read for a call to the
+// allocator.
+//
+// This is not a test.  `tests/alloc_scan.sh` builds it with `--opt=0`
+// and reads the IR.  At the default optimisation level the probe
+// inlines into `novo_main`, and there would be no function left to
+// attribute an allocation to.  The numbers are printed rather than
+// checked; the suites own correctness.
+
+use punyboot
+
+fn main() [io]
+    let p = punyboot.params()
+    var score = punyboot.delimiter() + punyboot.digit_value('k') + punyboot.digit_char(10)
+    score = score + punyboot.threshold(36, 72, p) + punyboot.adapt(700, 1, true, p)
+    score = score + punyboot.overflow_limit() % 7 + punyboot.max_label_len() + punyboot.max_domain_len() + punyboot.prefix_len()
+    if punyboot.is_basic('a')
+        score = score + 1
+    var s = punyboot.state(5, p)
+    s = punyboot.advance_to(s, 0xFC, p)
+    s = punyboot.skip(s, p)
+    let e = punyboot.emit_delta(s.delta, s.bias, p)
+    score = score + e.len + e.out[0] as Int
+    s = punyboot.after_delta(s, 6, p)
+    var scan = punyboot.digit_scan(0, p)
+    scan = punyboot.digit_push(scan, 'k', 72, p)
+    let ins = punyboot.insertion(s, 6, p)
+    let after = punyboot.after_insertion(s, ins, 6, p)
+    println("${score + scan.delta + ins.n + after.h}")

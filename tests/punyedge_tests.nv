@@ -1,0 +1,244 @@
+// punyedge_tests.nv — every refusal at the step and the offset it
+// names, the rules of RFC 5893 and RFC 5892 appendix A one condition at
+// a time, and the corners of the arithmetic.
+//
+// The inputs that decode to a surrogate (`bb0c`) and past U+10FFFF
+// (`bb00h`), and the one that overflows the accumulator (`99999999`),
+// were found by searching short digit strings with a transcription of
+// RFC 3492 section 6.2 in Python.
+
+use std.test
+use punyboot
+use punycode
+use punyidna
+use punyerr
+use udata
+
+fn code_of(r: Result<Str, punyerr.PunyError>) -> Str
+    match r
+        Ok(s)  => "ok ${s}"
+        Err(e) => "${punyerr.error_step(e)} ${punyerr.error_offset(e)} ${punyerr.error_label(e)}"
+
+fn int_or(r: Result<Int, punyerr.PunyError>) -> Int
+    match r
+        Ok(n)  => n
+        Err(_) => -1
+
+fn text_or(r: Result<Str, punyerr.PunyError>) -> Str
+    match r
+        Ok(s)  => s
+        Err(_) => ""
+
+fn fault_of(f: ?punyerr.PunyError) -> Str
+    match f
+        None    => "none"
+        Some(e) => e.message()
+
+fn which(f: ?punyerr.PunyError) -> Int
+    match f
+        Some(PunyBidiRule(_, n)) => n
+        _                        => 0
+
+@test
+fn test_the_decoder_refuses_what_it_cannot_read() [io]
+    test.case("a basic part with a byte that is not basic")
+    test.assert_eq(code_of(punycode.decode("bü-kva")), "decode 1 bü-kva")
+    test.case("a number that ends before its last digit")
+    test.assert_eq(code_of(punycode.decode("b")), "decode 1 b")
+    test.case("an accumulator past the bound")
+    test.assert_eq(code_of(punycode.decode("99999999")), "decode 7 99999999")
+    test.case("a surrogate, and a code point past U+10FFFF")
+    test.assert(str.contains(code_of(punycode.decode("bb0c")), "decode -1"))
+    test.assert(str.contains(code_of(punycode.decode("bb00h")), "decode -1"))
+    test.case("each length and buffer form passes a refusal on")
+    test.assert(int_or(punycode.decoded_len("b!")) == -1)
+    var c = bytes.cursor_be(bytes.zeros(8))
+    test.assert(int_or(punycode.decode_into("b!", c)) == -1)
+    test.case("a label with no hyphen is all digits")
+    match punycode.decode("kva")
+        Ok(u)  => test.assert_eq(punycode.code_points(u), [0x0369])
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_the_encoder_refuses_a_label_it_cannot_count() [io]
+    // 4000 copies of U+0080 and one U+10FFFF: the jump to U+10FFFF,
+    // times the 4001 code points it must pass, is past the 32-bit
+    // bound.
+    let huge = str.repeat(str.from_char(0x80), 4000) + str.from_char(0x10FFFF)
+    test.assert_eq(code_of(punycode.encode(huge)), "decode 0 ${huge}")
+    test.assert(int_or(punycode.encoded_len(huge)) == -1)
+    var c = bytes.cursor_be(bytes.zeros(8))
+    test.assert(int_or(punycode.encode_into(huge, c)) == -1)
+    test.assert(text_or(punycode.encode_label(huge)) == "")
+    test.case("a label whose encoding is past 63 characters")
+    let long = str.repeat("ü", 70)
+    match punycode.encode_label(long)
+        Ok(_)  => test.fail("seventy ü do not fit a label")
+        Err(e) => test.assert_eq(punyerr.error_step(e), "length")
+    test.case("an empty string encodes to nothing")
+    test.assert(text_or(punycode.encode("")) == "")
+
+@test
+fn test_what_is_not_canonical() [io]
+    test.assert(punycode.is_canonical("example") == false)
+    test.assert(punycode.is_canonical("xn--b!") == false)
+    test.assert(punycode.is_canonical("xn--abc-") == false)
+    test.assert(punycode.is_canonical("xn---kva") == false)
+    test.assert(punycode.is_canonical("xn--bcher-KVA") == false)
+    test.assert(punycode.is_canonical("xn--" + str.repeat("9", 8)) == false)
+
+@test
+fn test_the_arithmetic_corners() [io]
+    let p = punyboot.params()
+    test.case("a finished scan ignores further digits")
+    let done = punyboot.digit_push(punyboot.digit_scan(0, p), 'a', p.initial_bias, p)
+    let again = punyboot.digit_push(done, 'z', p.initial_bias, p)
+    test.assert(again.done and again.delta == done.delta and again.w == done.w)
+    test.case("a delta too large for sixteen digits is not writable")
+    test.assert(punyboot.emit_delta(9000000000000000000, 72, p).ok == false)
+    test.case("the jump past the bound is refused")
+    test.assert(punyboot.advance_to(punyboot.state(4000, p), 0x10FFFF, p).bad)
+    test.assert(punyboot.skip(PunyState { n: 128, delta: punyboot.overflow_limit(), bias: 72, h: 0, first: true, bad: false },
+        p).bad)
+    test.case("an adaptation that has to divide down")
+    test.assert(punyboot.adapt(1000000, 1, false, p) > 36)
+
+@test
+fn test_the_mapping_statuses_that_take_a_rule() [io]
+    let d = udata.data_full()
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0x2474)), "disallowed_STD3_mapped")
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0xE000)), "disallowed")
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0x0020)), "disallowed_STD3_valid")
+    test.assert_eq(punyidna.status_name(punyidna.char_status(d, 0x002E)), "valid")
+    test.assert(punyidna.map_char(d, 0x3002, punyidna.nontransitional()) == ['.'])
+    test.assert(punyidna.map_char(d, 0x200D, punyidna.transitional()) == [])
+    test.assert(punyidna.map_char(d, 0x03C2, punyidna.transitional()) == [0x03C3])
+
+@test
+fn test_the_bidi_rule_one_condition_at_a_time() [io]
+    let d = udata.data_full()
+    test.assert(punyidna.bidi_rule(d, "") == None)
+    test.assert_eq(which(punyidna.bidi_rule(d, "1a")), 1)
+    test.assert_eq(which(punyidna.bidi_rule(d, "aא")), 5)
+    test.assert_eq(which(punyidna.bidi_rule(d, "a!")), 6)
+    test.assert_eq(which(punyidna.bidi_rule(d, "אa")), 2)
+    test.assert_eq(which(punyidna.bidi_rule(d, "א!")), 3)
+    test.assert_eq(which(punyidna.bidi_rule(d, "א1\u{0662}א")), 4)
+    test.assert(punyidna.bidi_rule(d, "אב") == None)
+    test.assert(punyidna.bidi_rule(d, "a1\u{0301}") == None)
+    test.case("a bidi domain applies the rule to every label")
+    test.assert(punyidna.is_bidi_domain(d, "אב.com"))
+    test.assert_eq(code_of(punyidna.to_ascii(d, "אב.1a", punyidna.nontransitional())), "validate -1 1a")
+
+@test
+fn test_the_joiner_rules_and_the_contexto_rules() [io]
+    let d = udata.data_full()
+    test.case("a non-joiner between two Latin letters is out of context")
+    test.assert(str.contains(fault_of(punyidna.contextj_rule(d, "a\u{200C}b")), "offset 1"))
+    test.case("a joiner after a virama is in context, and one elsewhere is not")
+    test.assert(punyidna.contextj_rule(d, "\u{0915}\u{094D}\u{200D}\u{0937}") == None)
+    test.assert(punyidna.contextj_rule(d, "a\u{200D}b") != None)
+    test.case("a non-joiner between two dual-joining Arabic letters is in context")
+    test.assert(punyidna.contextj_rule(d, "\u{0628}\u{064B}\u{200C}\u{0628}") == None)
+    test.assert(punyidna.contextj_rule(d, "\u{0628}\u{200C}\u{064B}\u{0628}") == None)
+    test.case("a non-joiner at the end has nothing to join")
+    test.assert(punyidna.contextj_rule(d, "\u{0628}\u{200C}") != None)
+    test.case("the middle dot, the keraia, the geresh and the katakana middle dot")
+    test.assert(punyidna.contexto_rule(d, "l\u{00B7}l") == None)
+    test.assert(punyidna.contexto_rule(d, "a\u{00B7}l") != None)
+    test.assert(punyidna.contexto_rule(d, "\u{0375}\u{03B1}") == None)
+    test.assert(punyidna.contexto_rule(d, "\u{0375}a") != None)
+    test.assert(punyidna.contexto_rule(d, "\u{05D0}\u{05F3}") == None)
+    test.assert(punyidna.contexto_rule(d, "a\u{05F4}") != None)
+    test.assert(punyidna.contexto_rule(d, "\u{30A2}\u{30FB}") == None)
+    test.assert(punyidna.contexto_rule(d, "a\u{30FB}") != None)
+    test.case("the two Arabic-Indic digit ranges may not mix")
+    test.assert(punyidna.contexto_rule(d, "\u{0660}\u{0661}") == None)
+    test.assert(punyidna.contexto_rule(d, "\u{0660}\u{06F0}") != None)
+    test.assert(punyidna.contexto_rule(d, "\u{06F0}\u{0660}") != None)
+
+@test
+fn test_validation_refuses_each_criterion() [io]
+    let d = udata.data_full()
+    let n = punyidna.nontransitional()
+    let s = punyidna.strict()
+    test.assert(str.contains(fault_of(punyidna.validate_label(d, "e\u{0301}", n)), "Normalization Form C"))
+    test.assert(str.contains(fault_of(punyidna.validate_label(d, "ab--c", s)), "offset 2"))
+    test.assert(str.contains(fault_of(punyidna.validate_label(d, "ab-", s)), "offset 2"))
+    test.assert(str.contains(fault_of(punyidna.validate_label(d, "xn--abc", n)), "offset 0"))
+    test.assert(str.contains(fault_of(punyidna.validate_label(d, "a.b", n)), "code point 46"))
+    test.assert(str.contains(fault_of(punyidna.validate_label(d, "faß", punyidna.transitional())), "code point 223"))
+    test.assert(str.contains(fault_of(punyidna.validate_label(d, "A", n)), "code point 65"))
+    test.assert(str.contains(fault_of(punyidna.validate_label(d, "a\u{200C}b", n)), "joiner"))
+    test.assert(str.contains(fault_of(punyidna.validate_label(d, "a\u{00B7}b", n)), "code point 183"))
+    test.assert(punyidna.validate_label(d, "a\u{200C}b", punyidna.url_options()) != None)
+
+@test
+fn test_the_conversions_refuse_at_the_right_step() [io]
+    let d = udata.data_full()
+    let n = punyidna.nontransitional()
+    test.case("an empty name, and a name with a trailing root dot")
+    test.assert_eq(code_of(punyidna.to_ascii(d, "", n)), "validate 0 ")
+    test.assert_eq(code_of(punyidna.to_ascii(d, "bücher.example.", n)), "ok xn--bcher-kva.example.")
+    test.case("a label and a name past the DNS limits")
+    let long_label = str.repeat("a", 64)
+    test.assert_eq(code_of(punyidna.to_ascii(d, long_label + ".com", n)), "length -1 ${long_label}")
+    let name = str.repeat("abcdefghi.", 26)
+    test.assert_eq(code_of(punyidna.to_ascii(d, name + "com", n)), "length -1 ")
+    test.assert(punyidna.fits_dns(d, name + "com", punyidna.url_options()) == false)
+    test.assert_eq(code_of(punyidna.to_ascii(d, name + "com", punyidna.url_options())), "ok ${name}com")
+    test.case("encoded labels that are not what an encoder writes")
+    test.assert(str.contains(code_of(punyidna.to_ascii(d, "xn--a!.com", n)), "decode 1 a!"))
+    test.assert_eq(code_of(punyidna.to_ascii(d, "xn--abc-.com", n)), "decode -1 xn--abc-")
+    test.assert_eq(code_of(punyidna.to_ascii(d, "xn---kva.com", n)), "decode -1 xn---kva")
+    test.assert(str.contains(code_of(punyidna.to_ascii(d, "xn--ü.com", n)), "decode"))
+    test.assert(str.contains(code_of(punyidna.to_ascii(d, "xn--a-yda.com", n)), "map 1 aÀ"))
+    test.case("a valid encoded label passes through unchanged")
+    test.assert_eq(code_of(punyidna.to_ascii(d, "xn--bcher-kva.com", n)), "ok xn--bcher-kva.com")
+    test.case("an invalid encoded label is shown as it is")
+    test.assert(text_or(punyidna.to_unicode(d, "xn--abc-.com", n)) == "xn--abc-.com")
+    test.case("a label the STD3 rules refuse")
+    test.assert_eq(code_of(punyidna.to_ascii(d, "a_b.com", punyidna.strict())), "map 1 a_b")
+    test.case("a label too long to count, with the lengths not checked")
+    let huge = str.repeat(str.from_char(0x00E0), 30000) + str.from_char(0x3134A)
+    test.assert(str.contains(code_of(punyidna.to_ascii(d, huge, punyidna.url_options())), "decode 0"))
+    test.case("one label converts, and a full stop in it is refused")
+    test.assert_eq(code_of(punyidna.label_to_ascii(d, "a\u{3002}b", n)), "map 1 a.b")
+    test.assert_eq(code_of(punyidna.label_to_ascii(d, "example", n)), "ok example")
+
+@test
+fn test_the_compact_data_is_refused_by_every_conversion() [io]
+    let d = udata.data_compact()
+    let n = punyidna.nontransitional()
+    test.assert_eq(code_of(punyidna.to_ascii(d, "a.b", n)), "normalize -1 ")
+    test.assert_eq(code_of(punyidna.to_unicode(d, "a.b", n)), "normalize -1 ")
+    test.assert_eq(code_of(punyidna.label_to_ascii(d, "a", n)), "normalize -1 ")
+    test.assert_eq(code_of(punyidna.label_to_unicode(d, "a", n)), "normalize -1 ")
+    test.assert(int_or(punyidna.ascii_len(d, "a", n)) == -1)
+    var a = bytes.cursor_be(bytes.zeros(8))
+    test.assert(int_or(punyidna.to_ascii_into(d, "a", n, a)) == -1)
+    var u = bytes.cursor_be(bytes.zeros(8))
+    test.assert(int_or(punyidna.to_unicode_into(d, "a", n, u)) == -1)
+
+@test
+fn test_every_refusal_has_a_message_a_label_an_offset_and_a_step() [io]
+    let all = [PunyLabelTooLong("l", 70), PunyDomainTooLong(300), PunyEmptyLabel(1), PunyOverflow("l", 2),
+               PunyBadDigit("l", 3, 33), PunyNotBasic("l", 4, 252), PunyBadCodePoint("l", 0xD800),
+               PunyNotCanonical("l"), PunyPointlessEncoding("l"), PunyDisallowedChar("l", 5, 1),
+               PunyDisallowedStd3("l", 6, 95), PunyNotNormalized("l"), PunyBadHyphen("l", 7),
+               PunyLeadingCombiningMark("l", 0x301), PunyBidiRule("l", 3), PunyContextJ("l", 8, 0x200C),
+               PunyContextO("l", 9, 0xB7), PunyDataIncomplete("tables")]
+    let steps = ["length", "length", "validate", "decode", "decode", "decode", "decode", "decode", "decode",
+                 "map", "map", "normalize", "validate", "validate", "validate", "validate", "validate", "normalize"]
+    let offsets = [-1, -1, 1, 2, 3, 4, -1, -1, -1, 5, 6, -1, 7, -1, -1, 8, 9, -1]
+    for i in 0..list.len(all)
+        let e = all[i]
+        test.case(e.message())
+        test.assert(str.starts_with(e.message(), "punycode: "))
+        test.assert_eq(punyerr.error_step(e), steps[i])
+        test.assert_eq(punyerr.error_offset(e), offsets[i])
+        let expected_label = if i == 1 or i == 2 or i == 17
+            ""
+        else
+            "l"
+        test.assert_eq(punyerr.error_label(e), expected_label)

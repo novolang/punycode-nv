@@ -2,17 +2,10 @@
 // arithmetic written out, and the UTS #46 cases where two
 // implementations disagree.
 //
-// They COMPILE today and they FAIL at run, with `not implemented:
-// <module>.<fn>` from the `todo()` that is each body.  That is the
-// expected state of an interface release: the compiler has checked
-// every signature, every type and every effect row, and nothing else
-// has been checked because there is nothing else yet.
-//
-// WHERE THE VECTORS COME FROM.  RFC 3492 § 5 for the six parameters,
-// § 6.1 for `adapt`, § 6.2 for the threshold clamp, § 7.1 for the
-// sample strings — including the all-ASCII one that ends in a bare
-// delimiter, which is the case a decoder written from the prose gets
-// wrong.  UTS #46 § 4 for the mapping and validity criteria, and its
+// The vectors come from RFC 3492 section 5 for the six parameters,
+// section 6.1 for `adapt`, section 6.2 for the threshold clamp, and
+// section 7.1 for the sample strings, including the all-ASCII one that
+// ends in a bare delimiter.  UTS #46 section 4 for the mapping and validity criteria, and its
 // own deviation example `faß.de`, which is the one name that resolves
 // to two different places depending on the vintage of the resolver.
 // A test that passes here is a name any conforming implementation
@@ -87,7 +80,7 @@ fn test_an_encoder_writes_lower_case_and_nothing_else()
 
 @test
 fn test_the_threshold_is_base_times_k_less_the_bias_clamped_both_ends()
-    // RFC 3492 § 6.2's `t(k)`, written out.  At the initial bias the
+    // RFC 3492 section 6.2's `t(k)`, written out.  At the initial bias the
     // first threshold is below `tmin` and clamps to it, which is why an
     // early delta spends few digits.
     let p = punyboot.params()
@@ -209,7 +202,7 @@ fn test_a_second_german_sample_lands_on_a_different_bias()
 
 @test
 fn test_an_all_ascii_string_ends_in_a_bare_delimiter()
-    // RFC 3492 § 7.1's case (S): `-> $1.00 <-` encodes to itself with a
+    // RFC 3492 section 7.1's case (S): `-> $1.00 <-` encodes to itself with a
     // hyphen on the end and no digits at all, because there is nothing
     // to encode.  A decoder that assumed digits follow the delimiter
     // gets this one wrong.
