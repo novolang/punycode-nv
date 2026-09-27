@@ -4,6 +4,36 @@ Every published version, newest first. This file is on the publish
 allow-list, so it travels with the package: it is the only thing a
 consumer deciding whether to upgrade can read.
 
+## 0.1.0 — 2026-09-27
+
+The first implementation of the interface published as 0.0.2.
+
+- `punyboot` is the bootstring arithmetic of RFC 3492 with the
+  overflow bound of its section 6.4 set at the largest unsigned 32-bit
+  integer, as in the RFC's sample code. Every function carries
+  `@tier(embedded)`. `tests/embedded_probe.nv` boots under QEMU and
+  prints `PASS: punycode-embedded`, and `tests/alloc_scan.sh` finds no
+  allocation in the module.
+- `punycode` encodes and decodes all nineteen samples of RFC 3492
+  section 7.1 and agrees with Python's `punycode` codec on 300 seeded
+  strings.
+- `punyidna` carries the UTS #46 mapping table version 18.0.0, the
+  Bidi_Class of Unicode 15.0.0, and the joining types and scripts RFC
+  5892 appendix A reads, written by `tools/idna_tables.py` from the
+  `idna` package and Python's `unicodedata`. It agrees with the `idna`
+  package on 200 seeded domains and 2,000 seeded code points.
+- `punycode.code_points` and `punycode.text_of`, the UTF-8 conversions
+  the encoder and the decoder are written on.
+- The decoder's protocol is stated in `punyboot`'s module comment:
+  `insertion` reads a state whose `delta` is the scanned index, and
+  `after_insertion` reads the state from before the scan.
+- `url_options()` does not verify the DNS lengths, as the WHATWG URL
+  standard's host parser does not unless it is strict.
+- `char_status` derives the two STD3 statuses, which UTS #46 dropped
+  from its table in version 15.1, from the STD3 rule on ASCII.
+- The dependency is unicode-nv `^0.1.3`, and the toolchain floor is
+  0.13.0.
+
 ## 0.0.2 — 2026-09-15
 
 README rewritten to the package README style guide (docs/writing-a-readme.md); no change to the interface.

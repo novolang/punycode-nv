@@ -7,14 +7,10 @@ encoding that bridges the two: `bücher.example` travels as
 encoding is
 [RFC 3492](https://www.rfc-editor.org/rfc/rfc3492), and the rules around
 it are [UTS #46](https://www.unicode.org/reports/tr46/), Unicode IDNA
-Compatibility Processing. This package implements both, over
-[unicode-nv](https://novo-lang.org/packages/unicode-nv)'s tables.
-
-**Status: NOT IMPLEMENTED — interface only.** Every function is declared
-with its full signature, but every body is a `todo()` that panics when
-called. The package is published so its design can be reviewed and
-depended on before it is implemented. Version 0.1.0 will be the first
-working release.
+Compatibility Processing. This package implements both. It carries
+the UTS #46 mapping table, the bidirectional classes and the joining
+types, and takes normalisation from
+[unicode-nv](https://novo-lang.org/packages/unicode-nv).
 
 ## What punycode is
 
@@ -91,10 +87,7 @@ fn main() [io]
         Err(e) => println(e.message())
 ```
 
-Build and test with `novo pkg build` and `novo test`. Today `novo test`
-fails on purpose: every test reaches a `not implemented: <module>.<fn>`
-panic. The tests are the specification the implementation will have to
-satisfy.
+Build and test with `novo pkg build` and `novo test`.
 
 ## What the package contains
 
@@ -161,11 +154,14 @@ spans into a string it already holds wants these.
    processing and `fass.de` under transitional. Reach for
    `punyidna.nontransitional`. `punyidna.transitional` is for a program
    that must agree with something older.
-9. **The Unicode tables are the caller's argument.** Every function that
-   needs one takes a `UniData`. The full data is hundreds of kilobytes,
-   and a package that compiled it in would decide that cost for the
-   caller. The compact set is refused with `PunyDataIncomplete` rather
-   than producing a silently unnormalised name.
+9. **The normalisation tables are the caller's argument.** Every
+   function that needs them takes a `UniData`. The full data is
+   hundreds of kilobytes, and a package that compiled it in would
+   decide that cost for the caller. The compact set is refused with
+   `PunyDataIncomplete` rather than producing a silently unnormalised
+   name. The mapping table, the bidirectional classes and the joining
+   types are this package's own, about 100 KB, and they are linked
+   only by a program that calls `punyidna`.
 10. **Split the domain after mapping, not before.** UTS #46 maps three
     other characters to the full stop, among them IDEOGRAPHIC FULL
     STOP. `punyidna.split_labels` splits on `.` alone, which is correct
@@ -187,6 +183,16 @@ spans into a string it already holds wants these.
     `punyidna.ascii_len` answer before a caller commits, and
     `verify_dns_length` is the option that turns the check off for a
     name being converted only for display.
+15. **Transitional processing is deprecated.** UTS #46 version 15.1
+    deprecated it and dropped the two STD3 statuses from its table.
+    `punyidna.transitional` still maps the four deviations the old way,
+    and `punyidna.char_status` still answers the two STD3 statuses,
+    derived from the STD3 rule on ASCII as the older tables wrote them.
+16. **The tables have versions.** The mapping table is UTS #46 version
+    18.0.0, the bidirectional classes are Unicode 15.0.0, and
+    normalisation is unicode-nv's, Unicode 16.0.0. A code point newer
+    than a table is treated as that table's default: disallowed, or
+    left-to-right.
 
 ## Running on a microcontroller
 
@@ -203,10 +209,17 @@ or does not. It builds today:
 novo build --target=nrf52-qemu tests/embedded_probe.nv
 ```
 
-The probe produces a Cortex-M4 executable that reads the parameters,
-runs the threshold and the adaptation, and walks a delta in each
-direction. It builds and it is not run: every function it calls is a
-`todo()` today.
+The probe produces a Cortex-M4 executable that decodes the German
+sample's one delta to U+00FC at position 1, encodes it back to `kva`,
+and prints `PASS: punycode-embedded` when it boots under
+
+```bash
+qemu-system-arm -machine mps2-an386 -nographic -semihosting -kernel probe.elf
+```
+
+`tests/alloc_scan.sh` reads the emitted LLVM for the other half of the
+claim: every function of `punyboot` appears in it at `--opt=0`, and
+none calls the allocator.
 
 The consumer for this is a device with a display. Showing a domain name
 to a person is a decision firmware cannot delegate to its host, because
@@ -231,7 +244,7 @@ host that can afford them.
 - **Registry policy.** Whether a particular script may be mixed with
   another under a particular top-level domain is that registry's rule,
   and there are thousands of them.
-- **The Unicode tables themselves.** They come from unicode-nv as an
+- **The normalisation tables.** They come from unicode-nv as an
   argument. See rule 9.
 - **Name resolution.** This package converts a name. Looking it up is
   [dns-codec-nv](https://novo-lang.org/packages/dns-codec-nv) and the
@@ -241,10 +254,10 @@ host that can afford them.
 
 ## Related packages
 
-- [unicode-nv](https://novo-lang.org/packages/unicode-nv) supplies the
-  three things this package needs: NFC normalisation, the general
-  category of a code point, and the `UniData` both read. It is this
-  package's only dependency.
+- [unicode-nv](https://novo-lang.org/packages/unicode-nv) supplies NFC
+  normalisation, the canonical combining class, whether a code point is
+  a combining mark, and the `UniData` they read. It is this package's
+  only dependency.
 - [url-nv](https://novo-lang.org/packages/url-nv) parses URLs and today
   refuses a host with a byte above 127. `punyidna.host_to_ascii` with
   `punyidna.url_options` is the call that replaces that refusal, and
@@ -259,54 +272,35 @@ host that can afford them.
 ## Tests
 
 ```bash
-novo test tests/punycode_tests.nv      # 49 tests
+novo test tests/punycode_tests.nv       # the arithmetic, the samples, UTS #46's own cases
+novo test tests/rfc3492_tests.nv        # RFC 3492 section 7.1's nineteen samples
+novo test tests/differential_tests.nv   # Python's codec and the idna package
+novo test tests/punyedge_tests.nv       # every refusal, and each numbered rule on its own
+bash tests/coverage.sh                  # line coverage over src/, merged across the suites
+bash tests/alloc_scan.sh                # nothing in punyboot allocates
 ```
 
-Every vector is from RFC 3492 or UTS #46: the six parameters from
-section 5, `adapt` from section 6.1, the threshold clamp from section
-6.2, the sample strings from section 7.1, and UTS #46's own `faß.de`
-deviation example. The implementations to check a port against are the
-`idna` crate in Rust and Python's `idna` package.
+The suites check these things:
 
-The suite asserts that the parameters are the specification's own, that
-the first adaptation is damped and every later one halved, that a delta
-writes its digits least significant first, that the German sample
-encodes to the string everyone cites, that an all-ASCII string ends in a
-bare delimiter, that the delimiter is the last hyphen, that the round
-trip is what makes a label canonical, that the deviation example
-resolves to two different places, that an empty label is not a domain,
-that a label may not begin with a combining mark, that the STD3 and
-hyphen options are what decide an underscore, that the bidi rule applies
-only to a domain that has a right-to-left character, that a compact
-`UniData` is refused, and that each refusal names its label and its
-step.
-
-The tests compile today and fail at run, each on the `not implemented`
-panic that is its body. That is the expected state of an interface
-release. They turn green one at a time as bodies land.
-
-## Implementation status
-
-| Item | Implemented |
-| --- | --- |
-| `punyboot.params`, `.delimiter`, `.is_basic` | no |
-| `punyboot.digit_value`, `.digit_char`, `.threshold`, `.adapt` | no |
-| `punyboot.overflow_limit`, `.max_label_len`, `.max_domain_len`, `.prefix_len` | no |
-| `punyboot.state`, `.skip`, `.advance_to`, `.emit_delta`, `.after_delta` | no |
-| `punyboot.digit_scan`, `.digit_push`, `.insertion`, `.after_insertion` | no |
-| `punycode.ace_prefix`, `.is_encoded_label`, `.delimiter_at`, `.is_canonical` | no |
-| `punycode.encoded_len`, `.encode`, `.encode_into` | no |
-| `punycode.decoded_len`, `.decode`, `.decode_into` | no |
-| `punycode.encode_label`, `.decode_label` | no |
-| `punyidna.nontransitional`, `.transitional`, `.strict`, `.url_options` | no |
-| `punyidna.status_name`, `.char_status`, `.map_char`, `.map` | no |
-| `punyidna.validate_label`, `.bidi_rule`, `.is_bidi_domain` | no |
-| `punyidna.contextj_rule`, `.contexto_rule` | no |
-| `punyidna.to_ascii`, `.to_ascii_into`, `.to_unicode`, `.to_unicode_into` | no |
-| `punyidna.label_to_ascii`, `.label_to_unicode` | no |
-| `punyidna.split_labels`, `.join_labels`, `.ascii_len`, `.fits_dns` | no |
-| `punyidna.host_to_ascii`, `.host_to_unicode` | no |
-| `punyerr.error_label`, `.error_offset`, `.error_step`, `PunyError.message` | no |
+- The six parameters of RFC 3492 section 5, `adapt` from section 6.1,
+  the threshold clamp from section 6.2, and all nineteen sample strings
+  of section 7.1, read out of the RFC's text by `tools/rfc_vectors.py`.
+  The RFC's encoder writes an upper-case digit for a code point it
+  marks, which this package's encoder does not, so a sample encodes to
+  the RFC's string with its digits in lower case and decodes from it
+  as printed.
+- 300 seeded strings across ASCII, Latin, Greek, Cyrillic, Arabic,
+  Devanagari, Han, Hangul and the astral planes encode as Python's
+  `punycode` codec encodes them and decode back.
+- 200 seeded domains that the `idna` package accepts give its ASCII
+  form under `strict()` and its Unicode form back, and 2,000 seeded code
+  points have the status the `idna` package's copy of the mapping table
+  gives. `tools/differential.py` writes that suite.
+- UTS #46's deviation example: `faß.de` is `xn--fa-hia.de` under
+  nontransitional processing and `fass.de` under transitional.
+- Every refusal at the step and the offset it names, each numbered
+  condition of RFC 5893's bidi rule, and each context rule of RFC 5892
+  appendix A.
 
 ## Licence
 
