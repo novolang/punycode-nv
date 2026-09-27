@@ -2,42 +2,35 @@
 // integers that allocate nothing, hold no buffer, and build for a
 // microcontroller.
 //
-// Every body is a `todo()`.  The signatures are the design, and the
-// compiler checks them as claims; see the README for the stamp.
+// RFC 3492 defines a family of encodings from a string of arbitrary
+// code points onto a string of basic code points, parameterised by six
+// numbers; punycode is that family with one particular set of them.
+// The basic characters are copied out, and each non-basic character is
+// then described by a delta, how far to advance a running code point
+// and a running position, written in a number system whose digit
+// thresholds move as the encoding proceeds.  After each delta the bias
+// is recomputed from how large that delta was (`adapt`), so a string
+// whose characters are close together spends fewer digits per
+// character than one whose characters are scattered.
 //
-// WHY THERE IS A SECOND MODULE.  `punycode` and `punyidna` speak `Str`
-// and `Cursor`, and neither links at `@tier(embedded)`: the embedded
-// runtime defines no `novo_str_*` symbol, so a device that called one
-// would fail at the linker rather than at the type checker.  One
-// host-only function anywhere in a compilation unit is an undefined
-// symbol on a device whether or not the firmware calls it, so the half
-// a device uses is its own module and takes and returns integers.
+// `punycode` and `punyidna` speak `Str` and `Cursor`, and neither links
+// on a device, so the half a device uses is this module, and it takes
+// and returns integers.  Every function carries `@tier(embedded)`, so
+// an allocation written here is refused where it is written.
 //
-// WHAT BOOTSTRING IS.  RFC 3492 defines a family of encodings from a
-// string of arbitrary code points onto a string of BASIC code points,
-// parameterised by six numbers; punycode is that family with one
-// particular set of them.  The algorithm is a generalised
-// variable-length integer: the basic characters are copied out, and
-// then each non-basic character is described by a DELTA — how far to
-// advance a running code point and a running position — written in a
-// number system whose digit thresholds MOVE as the encoding proceeds.
+// RFC 3492 section 6.4 requires an implementation to detect an overflow
+// of the delta accumulator rather than wrap, because a wrapped delta
+// decodes to a different string.  `overflow_limit` is the bound, the
+// largest unsigned 32-bit integer as in the RFC's sample code, and the
+// `bad` fields are where a step says it was passed.
 //
-// THE MOVING THRESHOLD IS THE WHOLE TRICK, and `adapt` is it.  After
-// each delta the bias is recomputed from how large that delta was, so
-// that a string whose characters are close together spends fewer
-// digits per character than one whose characters are scattered.  A
-// Chinese label and a Greek label both come out short, and neither
-// pays for the other's range.  Everything in this module exists to
-// serve that one function.
-//
-// THE ARITHMETIC OVERFLOWS ON PURPOSE, or rather refuses to: RFC 3492
-// § 6.4 requires an implementation to detect an overflow of the delta
-// accumulator rather than wrap, because a wrapped delta decodes to a
-// different string and a domain name that decodes two ways is a
-// phishing tool.  `overflow_limit` is the bound and `PunyState.bad` is
-// where a decoder says so.
+// A decoder drives the functions in this order for each delta: a
+// `digit_scan` started from the state's `delta`, which holds the
+// running insertion index; `digit_push` for each digit until `done`;
+// `insertion` over a state whose `delta` is the scan's result; and
+// `after_insertion` over the state from before the scan.
 
-// The six numbers RFC 3492 § 5 fixes for punycode.
+// The six numbers RFC 3492 section 5 fixes for punycode.
 //
 // A `@value` struct, so it lives in the caller's stack frame with no
 // header, no reference count and no allocation.  It is a struct rather
@@ -55,7 +48,7 @@ struct PunyParams
     tmax: Int
     // 38: the bias skew.
     skew: Int
-    // 700: the damping applied to the FIRST delta only, which is what
+    // 700: the damping applied to the first delta only, which is what
     // keeps one early outlier from ruining the bias for everything
     // after it.
     damp: Int
@@ -73,25 +66,34 @@ struct PunyParams
 // fn main() [io]
 //     println("${punyboot.params().base}")   // 36
 // ```
-pub fn params() -> PunyParams []
-    todo("punyboot.params")
+pub @tier(embedded)
+fn params() -> PunyParams []
+    PunyParams { base: 36,
+        tmin: 1,
+        tmax: 26,
+        skew: 38,
+        damp: 700,
+        initial_bias: 72,
+        initial_n: 128 }
 
 // The delimiter that separates the basic code points from the encoded
 // deltas: `-`, which is 45.
 //
-// The LAST one in the string, not the first — a label may hold hyphens
+// The last one in the string, not the first: a label may hold hyphens
 // of its own, and a decoder that scanned from the left would cut a
 // name in the wrong place.  `punycode.decode` is where that rule is
 // applied.
-pub fn delimiter() -> Int []
-    todo("punyboot.delimiter")
+pub @tier(embedded)
+fn delimiter() -> Int []
+    '-'
 
 // Whether a code point is basic: below 128.
 //
 // The whole of what "basic" means in RFC 3492, and the reason an ASCII
 // label encodes to itself.
-pub fn is_basic(cp: Int) -> Bool []
-    todo("punyboot.is_basic")
+pub @tier(embedded)
+fn is_basic(cp: Int) -> Bool []
+    cp >= 0 and cp < 128
 
 // The value of a digit character, `0 ..= 35`, or -1 for anything that
 // is not one.
@@ -108,8 +110,15 @@ pub fn is_basic(cp: Int) -> Bool []
 //     let z = punyboot.digit_value(48)
 //     println("${a} ${z}")   // 0 26
 // ```
-pub fn digit_value(cp: Int) -> Int []
-    todo("punyboot.digit_value")
+pub @tier(embedded)
+fn digit_value(cp: Int) -> Int []
+    if cp >= 'a' and cp <= 'z'
+        return cp - 'a'
+    if cp >= 'A' and cp <= 'Z'
+        return cp - 'A'
+    if cp >= '0' and cp <= '9'
+        return cp - '0' + 26
+    -1
 
 // The character a digit value is written as, lower case for `0 ..= 25`
 // and a digit for `26 ..= 35`.
@@ -118,23 +127,33 @@ pub fn digit_value(cp: Int) -> Int []
 // that emitted upper case would produce a second encoding of one
 // label, and `xn--` labels are compared as bytes by DNS resolvers that
 // have never heard of punycode.
-pub fn digit_char(d: Int) -> Int []
-    todo("punyboot.digit_char")
+pub @tier(embedded)
+fn digit_char(d: Int) -> Int []
+    if d >= 0 and d < 26
+        return 'a' + d
+    if d >= 26 and d < 36
+        return '0' + d - 26
+    -1
 
 // The digit threshold at position `k` for this bias: `base * k` less
 // the bias, clamped to `tmin` below and `tmax` above.
 //
 // The function that turns the bias into the number system's shape.
 // `k` counts in multiples of `base`, starting at `base` itself.
-pub fn threshold(k: Int, bias: Int, p: PunyParams) -> Int []
-    todo("punyboot.threshold")
+pub @tier(embedded)
+fn threshold(k: Int, bias: Int, p: PunyParams) -> Int []
+    if k <= bias + p.tmin
+        return p.tmin
+    if k >= bias + p.tmax
+        return p.tmax
+    k - bias
 
 // The bias after a delta of `delta` over `numpoints` code points.
 //
-// RFC 3492 § 6.1, transcribed: the delta is divided by `damp` on the
+// RFC 3492 section 6.1, transcribed: the delta is divided by `damp` on the
 // first call and by 2 on every later one, then increased by itself
 // divided by `numpoints`, then reduced until it is small enough, and
-// the result is a bias that makes the NEXT delta cheap if it is
+// the result is a bias that makes the next delta cheap if it is
 // similar in size.
 //
 // The `firsttime` flag is not a convenience: the damping on the first
@@ -150,36 +169,53 @@ pub fn threshold(k: Int, bias: Int, p: PunyParams) -> Int []
 //     let p = punyboot.params()
 //     println("${punyboot.adapt(p.damp, 1, true, p)}")   // 1
 // ```
-pub fn adapt(delta: Int, numpoints: Int, firsttime: Bool, p: PunyParams) -> Int []
-    todo("punyboot.adapt")
+pub @tier(embedded)
+fn adapt(delta: Int, numpoints: Int, firsttime: Bool, p: PunyParams) -> Int []
+    var d = if firsttime
+        delta / p.damp
+    else
+        delta / 2
+    d = d + d / numpoints
+    var k = 0
+    let limit = (p.base - p.tmin) * p.tmax / 2
+    for _ in 0..64
+        if d <= limit
+            break
+        d = d / (p.base - p.tmin)
+        k = k + p.base
+    k + (p.base - p.tmin + 1) * d / (d + p.skew)
 
-// The largest delta accumulator RFC 3492 § 6.4 allows before an
+// The largest delta accumulator RFC 3492 section 6.4 allows before an
 // implementation must refuse.
 //
 // A wrapped delta decodes to a different string, and a domain name
 // that decodes two ways is a phishing tool — so the bound is checked
 // rather than trusted to the machine's arithmetic.
-pub fn overflow_limit() -> Int []
-    todo("punyboot.overflow_limit")
+pub @tier(embedded)
+fn overflow_limit() -> Int []
+    4294967295
 
 // How many characters a label may hold: 63.
 //
 // A DNS label's own limit, and the one that makes `xn--` expensive: the
 // four-character prefix comes out of the same sixty-three.
-pub fn max_label_len() -> Int []
-    todo("punyboot.max_label_len")
+pub @tier(embedded)
+fn max_label_len() -> Int []
+    63
 
 // How many characters a domain name may hold: 253.
 //
 // The 255-octet DNS limit less the root label's length byte and the
 // trailing zero, which is the number every implementation actually
 // checks.
-pub fn max_domain_len() -> Int []
-    todo("punyboot.max_domain_len")
+pub @tier(embedded)
+fn max_domain_len() -> Int []
+    253
 
 // How many characters the ACE prefix occupies: 4, for `xn--`.
-pub fn prefix_len() -> Int []
-    todo("punyboot.prefix_len")
+pub @tier(embedded)
+fn prefix_len() -> Int []
+    4
 
 // ── the encoder's state, in registers ───────────────────────────────
 
@@ -190,7 +226,7 @@ pub fn prefix_len() -> Int []
 // `delta` the accumulator, `bias` the current bias, `h` how many code
 // points have been handled, and `first` whether the next adaptation is
 // the damped one.  `bad` is set when the delta accumulator passed
-// `overflow_limit`, which is the refusal RFC 3492 § 6.4 requires.
+// `overflow_limit`, which is the refusal RFC 3492 section 6.4 requires.
 pub @value
 struct PunyState
     n: Int
@@ -205,24 +241,44 @@ struct PunyState
 //
 // `basic_count` is how many of them there were, which is the `h` the
 // algorithm starts from.
-pub fn state(basic_count: Int, p: PunyParams) -> PunyState []
-    todo("punyboot.state")
+pub @tier(embedded)
+fn state(basic_count: Int, p: PunyParams) -> PunyState []
+    PunyState { n: p.initial_n,
+        delta: 0,
+        bias: p.initial_bias,
+        h: basic_count,
+        first: true,
+        bad: false }
 
 // Advance the state past one code point that was not encoded: `delta`
 // increases by one.
 //
 // The inner loop of the encoder's scan, and the place the overflow
 // check bites.
-pub fn skip(s: PunyState, p: PunyParams) -> PunyState []
-    todo("punyboot.skip")
+pub @tier(embedded)
+fn skip(s: PunyState, p: PunyParams) -> PunyState []
+    let delta = s.delta + 1
+    PunyState { n: s.n,
+        delta: delta,
+        bias: s.bias,
+        h: s.h,
+        first: s.first,
+        bad: s.bad or delta > overflow_limit() }
 
 // Advance the running code point to `n`, folding the distance into the
 // delta.
 //
 // What an encoder does between passes: it has found the smallest code
 // point above `n` that the input still holds, and this is the jump.
-pub fn advance_to(s: PunyState, n: Int, p: PunyParams) -> PunyState []
-    todo("punyboot.advance_to")
+pub @tier(embedded)
+fn advance_to(s: PunyState, n: Int, p: PunyParams) -> PunyState []
+    let step = n - s.n
+    let over = step > (overflow_limit() - s.delta) / (s.h + 1)
+    let delta = if over
+        s.delta
+    else
+        s.delta + step * (s.h + 1)
+    PunyState { n: n, delta: delta, bias: s.bias, h: s.h, first: s.first, bad: s.bad or over }
 
 // What one delta's digits came to: the characters, and whether they
 // were writable.
@@ -238,18 +294,36 @@ struct PunyEmit
 
 // The digits one delta is written as, at this bias.
 //
-// The generalised variable-length integer of RFC 3492 § 6.3: divide by
-// the moving threshold until what is left fits, least significant
-// digit first.
-pub fn emit_delta(delta: Int, bias: Int, p: PunyParams) -> PunyEmit []
-    todo("punyboot.emit_delta")
+// The generalised variable-length integer of RFC 3492 section 6.3:
+// divide by the moving threshold until what is left fits, least
+// significant digit first.  A delta at or below `overflow_limit` never
+// needs more than 16 digits; `ok` is false for one that would.
+pub @tier(embedded)
+fn emit_delta(delta: Int, bias: Int, p: PunyParams) -> PunyEmit []
+    let count = digit_count(delta, bias, p)
+    PunyEmit { out: [digit_at(delta, bias, p, 0) as u8, digit_at(delta, bias, p, 1) as u8,
+                     digit_at(delta, bias, p, 2) as u8, digit_at(delta, bias, p, 3) as u8,
+                     digit_at(delta, bias, p, 4) as u8, digit_at(delta, bias, p, 5) as u8,
+                     digit_at(delta, bias, p, 6) as u8, digit_at(delta, bias, p, 7) as u8,
+                     digit_at(delta, bias, p, 8) as u8, digit_at(delta, bias, p, 9) as u8,
+                     digit_at(delta, bias, p, 10) as u8, digit_at(delta, bias, p, 11) as u8,
+                     digit_at(delta, bias, p, 12) as u8, digit_at(delta, bias, p, 13) as u8,
+                     digit_at(delta, bias, p, 14) as u8, digit_at(delta, bias, p, 15) as u8],
+               len: (if count <= 16 then count else 16),
+               ok: count <= 16 }
 
 // The state after one delta has been written: `h` and `n` advance, the
 // bias adapts, the delta resets.
 //
 // `numpoints` is `h + 1`, which the caller has because it is counting.
-pub fn after_delta(s: PunyState, numpoints: Int, p: PunyParams) -> PunyState []
-    todo("punyboot.after_delta")
+pub @tier(embedded)
+fn after_delta(s: PunyState, numpoints: Int, p: PunyParams) -> PunyState []
+    PunyState { n: s.n,
+        delta: 0,
+        bias: adapt(s.delta, numpoints, s.first, p),
+        h: s.h + 1,
+        first: false,
+        bad: s.bad }
 
 // ── the decoder's state, in registers ───────────────────────────────
 
@@ -268,8 +342,9 @@ struct PunyDigitScan
     bad: Bool
 
 // A fresh digit scan, starting from the delta a decoder has so far.
-pub fn digit_scan(delta: Int, p: PunyParams) -> PunyDigitScan []
-    todo("punyboot.digit_scan")
+pub @tier(embedded)
+fn digit_scan(delta: Int, p: PunyParams) -> PunyDigitScan []
+    PunyDigitScan { delta: delta, w: 1, k: p.base, done: false, bad: false }
 
 // Feed one character of an encoded delta and answer the scan after it.
 //
@@ -287,8 +362,23 @@ pub fn digit_scan(delta: Int, p: PunyParams) -> PunyDigitScan []
 //     let d = punyboot.digit_push(punyboot.digit_scan(0, p), 97, p.initial_bias, p)
 //     println("${d.done} ${d.delta}")   // true 0
 // ```
-pub fn digit_push(s: PunyDigitScan, cp: Int, bias: Int, p: PunyParams) -> PunyDigitScan []
-    todo("punyboot.digit_push")
+pub @tier(embedded)
+fn digit_push(s: PunyDigitScan, cp: Int, bias: Int, p: PunyParams) -> PunyDigitScan []
+    if s.done or s.bad
+        return s
+    let digit = digit_value(cp)
+    if digit < 0 or digit > (overflow_limit() - s.delta) / s.w
+        return PunyDigitScan { delta: s.delta, w: s.w, k: s.k, done: false, bad: true }
+    let delta = s.delta + digit * s.w
+    let t = threshold(s.k, bias, p)
+    if digit < t
+        return PunyDigitScan { delta: delta, w: s.w, k: s.k, done: true, bad: false }
+    let over = s.w > overflow_limit() / (p.base - t)
+    PunyDigitScan { delta: delta,
+        w: (if over then s.w else s.w * (p.base - t)),
+        k: s.k + p.base,
+        done: false,
+        bad: over }
 
 // Where a finished delta puts the running code point and the insertion
 // position.
@@ -308,10 +398,50 @@ struct PunyInsertion
 // is above 0x10FFFF or is a surrogate, which is the check a decoder
 // must make before it writes anything: an unchecked punycode label can
 // name a code point that does not exist.
-pub fn insertion(s: PunyState, numpoints: Int, p: PunyParams) -> PunyInsertion []
-    todo("punyboot.insertion")
+pub @tier(embedded)
+fn insertion(s: PunyState, numpoints: Int, p: PunyParams) -> PunyInsertion []
+    let n = s.n + s.delta / numpoints
+    let bad = n > 0x10FFFF or n >= 0xD800 and n <= 0xDFFF
+    PunyInsertion { n: n, i: s.delta % numpoints, bad: bad }
 
 // The state after one insertion has been decoded.
-pub fn after_insertion(s: PunyState, ins: PunyInsertion, numpoints: Int,
-                       p: PunyParams) -> PunyState []
-    todo("punyboot.after_insertion")
+pub @tier(embedded)
+fn after_insertion(s: PunyState, ins: PunyInsertion, numpoints: Int, p: PunyParams) -> PunyState []
+    let delta = (ins.n - s.n) * numpoints + ins.i - s.delta
+    PunyState { n: ins.n,
+        delta: ins.i + 1,
+        bias: adapt(delta, numpoints, s.first, p),
+        h: s.h + 1,
+        first: false,
+        bad: s.bad or ins.bad }
+
+// How many digits `delta` takes at this bias.
+@tier(embedded)
+fn digit_count(delta: Int, bias: Int, p: PunyParams) -> Int
+    var q = delta
+    var k = p.base
+    for pos in 0..40
+        let t = threshold(k, bias, p)
+        if q < t
+            return pos + 1
+        q = (q - t) / (p.base - t)
+        k = k + p.base
+    // cov: skip — each digit divides by at least 10, so an Int has at most 20 digits and the loop always answers
+    40
+
+// The character of digit `index` of `delta` at this bias, or 0 past
+// its last digit.
+@tier(embedded)
+fn digit_at(delta: Int, bias: Int, p: PunyParams, index: Int) -> Int
+    var q = delta
+    var k = p.base
+    for pos in 0..16
+        let t = threshold(k, bias, p)
+        if q < t
+            return if pos == index then digit_char(q) else 0
+        if pos == index
+            return digit_char(t + (q - t) % (p.base - t))
+        q = (q - t) / (p.base - t)
+        k = k + p.base
+    // cov: skip — `index` is below 16, so the loop answers at `index` or at the last digit before it
+    0

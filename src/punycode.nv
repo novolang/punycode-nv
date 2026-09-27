@@ -1,42 +1,39 @@
 // punycode — RFC 3492, over strings and into buffers the caller
 // already owns.
 //
-// Every body is a `todo()`.  The signatures are the design, and the
-// compiler checks them as claims; see the README for the stamp.
+// `punyboot` is the arithmetic.  This module is that arithmetic with a
+// string attached, plus the rules about a whole label that a
+// per-character machine cannot see: where the delimiter is, how long
+// the result may be, and whether an `xn--` label is the one an encoder
+// would have produced.
 //
-// WHAT THIS MODULE IS.  `punyboot` is the arithmetic — one integer of
-// state, no buffer, no allocation.  This module is that arithmetic with
-// a string attached, plus the three rules that are about the WHOLE
-// label and that a per-character machine cannot see: where the
-// delimiter is, how long the result may be, and whether an `xn--`
-// label is the one an encoder would have produced.
-//
-// THE DELIMITER IS THE LAST HYPHEN, not the first.  The basic code
+// The delimiter is the last hyphen, not the first.  The basic code
 // points are copied out unchanged and a hyphen separates them from the
-// digits — and a label may contain hyphens of its own, so a decoder
-// that scanned from the left would cut `pre-fix` in the wrong place.
-// Scanning from the right is unambiguous because the digit alphabet
-// has no hyphen in it.
+// digits, and a label may contain hyphens of its own.  Scanning from
+// the right is unambiguous because the digit alphabet has no hyphen.
+// A label with no hyphen is all digits: `4can8pwxg` has no basic part.
 //
-// A LABEL WITH NO HYPHEN IS ALL DIGITS.  `bcher-kva` has a basic part;
-// `4can8pwxg` has none, and the whole label is the encoded deltas.
-// That is the case a decoder written from the prose gets wrong,
-// because the prose describes the delimiter as if it were always
-// there.
-//
-// THIS MODULE DOES NO IDNA.  It encodes and decodes; it does not map,
-// normalise, or check anything about the characters it is handed.
-// `punyidna` is the module that does, and the split is the one RFC
-// 3492 itself makes — punycode is a general bootstring encoding, and
-// IDNA is one application of it.
+// This module does no IDNA.  It encodes and decodes, and does not map,
+// normalise, or check the characters it is handed; `punyidna` does.
+// The split is the one RFC 3492 itself makes: punycode is a general
+// bootstring encoding, and IDNA is one application of it.
+
+use punyboot
 
 // The four characters in front of an encoded label: `"xn--"`.
 //
-// "ACE" is the specification's word — ASCII Compatible Encoding — and
-// the prefix is what tells a resolver that a label is punycode rather
-// than a name that happens to look like it.
+// "ACE" is the specification's word, for ASCII Compatible Encoding,
+// and the prefix is what tells a resolver that a label is punycode
+// rather than a name that happens to look like it.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     println(punycode.ace_prefix())   // xn--
+// ```
 pub fn ace_prefix() -> Str []
-    todo("punycode.ace_prefix")
+    "xn--"
 
 // Whether a label begins with the ACE prefix, compared without regard
 // to case.
@@ -55,17 +52,27 @@ pub fn ace_prefix() -> Str []
 //     println("${a} ${b} ${c}")   // true true false
 // ```
 pub fn is_encoded_label(label: Str) -> Bool []
-    todo("punycode.is_encoded_label")
+    str.len(label) >= 4 and str.lower(str.slice(label, 0, 4)) == "xn--"
 
 // ── the raw encoding, without the prefix ────────────────────────────
 
 // How many characters `input` encodes to, prefix excluded.
 //
-// Answered without producing them, so a caller can size a buffer
-// exactly.  `PunyOverflow` when the delta arithmetic would pass RFC
-// 3492 § 6.4's bound.
+// A caller sizes a buffer with it.  `PunyOverflow` when the delta
+// arithmetic would pass RFC 3492 section 6.4's bound.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     match punycode.encoded_len("bücher")
+//         Ok(n)  => println("${n}")   // 9
+//         Err(e) => println(e.message())
+// ```
 pub fn encoded_len(input: Str) -> Result<Int, PunyError> []
-    todo("punycode.encoded_len")
+    match encode(input)
+        Ok(s)  => Ok(str.len(s))
+        Err(e) => Err(e)
 
 // Encode one label's Unicode into punycode, prefix excluded.
 //
@@ -73,25 +80,77 @@ pub fn encoded_len(input: Str) -> Result<Int, PunyError> []
 // use punycode
 //
 // fn main() [io]
-//     // RFC 3492 § 7.1's German sample, without its prefix.
+//     // RFC 3492 section 7.1's German sample, without its prefix.
 //     match punycode.encode("bücher")
 //         Ok(s)  => println(s)   // bcher-kva
 //         Err(e) => println(e.message())
 // ```
 pub fn encode(input: Str) -> Result<Str, PunyError> []
-    todo("punycode.encode")
+    let p = punyboot.params()
+    let cps = code_points(input)
+    var out: [Int] = list.filter(cps, c => punyboot.is_basic(c))
+    let b = list.len(out)
+    if b > 0
+        list.push(out, punyboot.delimiter())
+    var s = punyboot.state(b, p)
+    let total = list.len(cps)
+    for _ in 0..total
+        if s.h >= total
+            break
+        let floor = s.n
+        let m = list.fold(cps, (least, c) => (if c >= floor and c < least then c else least), 0x110000)
+        s = punyboot.advance_to(s, m, p)
+        for c in cps
+            if c < s.n
+                s = punyboot.skip(s, p)
+            if s.bad
+                return Err(PunyOverflow(input, 0))
+            if c == s.n
+                let e = punyboot.emit_delta(s.delta, s.bias, p)
+                for k in 0..e.len
+                    list.push(out, e.out[k] as Int)
+                s = punyboot.after_delta(s, s.h + 1, p)
+        s = punyboot.skip(s, p)
+        s = PunyState { n: s.n + 1, delta: s.delta, bias: s.bias, h: s.h, first: s.first, bad: s.bad }
+    Ok(text_of(out))
 
 // Encode into the caller's buffer and answer how many characters were
 // written.
 //
-// The allocation-free path, for a device or for a caller that sized
-// with `encoded_len`.  Nothing here grows anything.
-pub fn encode_into(input: Str, mut dst: Cursor) -> Result<Int, PunyError> []
-    todo("punycode.encode_into")
+// For a caller that sized its buffer with `encoded_len` and is
+// assembling a name in place.  The cursor panics if the buffer is too
+// small, as every cursor write does.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     var c = bytes.cursor_be(bytes.zeros(16))
+//     match punycode.encode_into("bücher", c)
+//         Ok(n)  => println("${n}")   // 9
+//         Err(e) => println(e.message())
+// ```
+pub fn encode_into(input: Str, var dst: Cursor) -> Result<Int, PunyError> []
+    match encode(input)
+        Err(e) => Err(e)
+        Ok(s)  =>
+            dst.put_bytes(bytes.from_str(s))
+            Ok(str.len(s))
 
-// How many characters `input` decodes to.
+// How many characters `input` decodes to, counted in code points.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     match punycode.decoded_len("bcher-kva")
+//         Ok(n)  => println("${n}")   // 6
+//         Err(e) => println(e.message())
+// ```
 pub fn decoded_len(input: Str) -> Result<Int, PunyError> []
-    todo("punycode.decoded_len")
+    match decode(input)
+        Ok(s)  => Ok(list.len(code_points(s)))
+        Err(e) => Err(e)
 
 // Decode punycode into Unicode, prefix excluded.
 //
@@ -109,18 +168,74 @@ pub fn decoded_len(input: Str) -> Result<Int, PunyError> []
 //         Err(e) => println(e.message())
 // ```
 pub fn decode(input: Str) -> Result<Str, PunyError> []
-    todo("punycode.decode")
+    let p = punyboot.params()
+    let n = str.len(input)
+    let cut = delimiter_at(input)
+    var out: [Int] = []
+    let basic_end = if cut < 0
+        0
+    else
+        cut
+    for i in 0..basic_end
+        let b = str.byte_at_or(input, i, 0)
+        if not punyboot.is_basic(b)
+            return Err(PunyNotBasic(input, i, b))
+        list.push(out, b)
+    var s = punyboot.state(list.len(out), p)
+    var at = if cut < 0
+        0
+    else
+        cut + 1
+    for _ in 0..n
+        if at >= n
+            break
+        var scan = punyboot.digit_scan(s.delta, p)
+        for _ in 0..n
+            if at >= n or scan.done or scan.bad
+                break
+            let ch = str.byte_at_or(input, at, 0)
+            scan = punyboot.digit_push(scan, ch, s.bias, p)
+            if scan.bad and punyboot.digit_value(ch) < 0
+                return Err(PunyBadDigit(input, at, ch))
+            at = at + 1
+        if scan.bad
+            return Err(PunyOverflow(input, at - 1))
+        if not scan.done
+            return Err(PunyBadDigit(input, n, 0))
+        let numpoints = list.len(out) + 1
+        let before = s
+        let scanned = PunyState { n: s.n, delta: scan.delta, bias: s.bias, h: s.h, first: s.first, bad: false }
+        let ins = punyboot.insertion(scanned, numpoints, p)
+        if ins.bad
+            return Err(PunyBadCodePoint(input, ins.n))
+        out = list.concat(list.concat(out[0:ins.i], [ins.n]), out[ins.i:])
+        s = punyboot.after_insertion(before, ins, numpoints, p)
+    Ok(text_of(out))
 
-// Decode into the caller's buffer and answer how many characters were
-// written.
-pub fn decode_into(input: Str, mut dst: Cursor) -> Result<Int, PunyError> []
-    todo("punycode.decode_into")
+// Decode into the caller's buffer, as UTF-8, and answer how many
+// characters were written, counted in code points.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     var c = bytes.cursor_be(bytes.zeros(16))
+//     match punycode.decode_into("bcher-kva", c)
+//         Ok(n)  => println("${n}")   // 6
+//         Err(e) => println(e.message())
+// ```
+pub fn decode_into(input: Str, var dst: Cursor) -> Result<Int, PunyError> []
+    match decode(input)
+        Err(e) => Err(e)
+        Ok(s)  =>
+            dst.put_bytes(bytes.from_str(s))
+            Ok(list.len(code_points(s)))
 
 // ── one whole label, prefix and all ─────────────────────────────────
 
 // Encode one label, adding the `xn--` prefix when it is needed.
 //
-// A label with no non-basic characters comes back UNCHANGED and
+// A label with no non-basic characters comes back unchanged and
 // unprefixed, which is what makes an ASCII domain cost nothing.  A
 // label that would exceed 63 characters with the prefix on it is
 // `PunyLabelTooLong`, which is the rule that makes long international
@@ -135,15 +250,34 @@ pub fn decode_into(input: Str, mut dst: Cursor) -> Result<Int, PunyError> []
 //         Err(e) => println(e.message())
 // ```
 pub fn encode_label(label: Str) -> Result<Str, PunyError> []
-    todo("punycode.encode_label")
+    if list.all(code_points(label), c => punyboot.is_basic(c))
+        return Ok(label)
+    match encode(label)
+        Err(e) => Err(e)
+        Ok(s)  =>
+            let encoded = ace_prefix() + s
+            if str.len(encoded) > punyboot.max_label_len()
+                return Err(PunyLabelTooLong(encoded, str.len(encoded)))
+            Ok(encoded)
 
 // Decode one label, stripping the `xn--` prefix when it is there.
 //
 // A label without the prefix comes back unchanged: it was never
 // punycode, and decoding it would turn a perfectly good ASCII name
 // into something else.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     match punycode.decode_label("xn--mnchen-3ya")
+//         Ok(s)  => println(s)   // münchen
+//         Err(e) => println(e.message())
+// ```
 pub fn decode_label(label: Str) -> Result<Str, PunyError> []
-    todo("punycode.decode_label")
+    if not is_encoded_label(label)
+        return Ok(label)
+    decode(str.slice(label, 4, str.len(label)))
 
 // Whether an `xn--` label is the encoding an encoder would have
 // produced for its own decoded value.
@@ -151,7 +285,9 @@ pub fn decode_label(label: Str) -> Result<Str, PunyError> []
 // UTS #46 requires the round trip, and the reason is comparison: two
 // encodings of one name are two names as far as a DNS resolver or a
 // certificate matcher is concerned, and a resolver has never heard of
-// punycode.  `PunyNotCanonical` is the refusal.
+// punycode.  `PunyNotCanonical` is the refusal.  A label that decodes
+// to nothing but ASCII is not canonical either, since an encoder would
+// have left it unencoded.
 //
 // ```novo
 // use punycode
@@ -161,14 +297,24 @@ pub fn decode_label(label: Str) -> Result<Str, PunyError> []
 //     println("${ok}")   // true
 // ```
 pub fn is_canonical(label: Str) -> Bool []
-    todo("punycode.is_canonical")
+    if not is_encoded_label(label)
+        return false
+    let body = str.slice(label, 4, str.len(label))
+    match decode(body)
+        Err(_) => false
+        Ok(u)  =>
+            if list.all(code_points(u), c => punyboot.is_basic(c))
+                return false
+            match encode(u)
+                Ok(again) => again == body
+                // cov: skip — a string that decoded has every delta within the bound, and encoding it computes the same deltas
+                Err(_)    => false
 
-// The position of the delimiter in an encoded label — the LAST hyphen
+// The position of the delimiter in an encoded label , the last hyphen
 // — or -1 when there is none, which means the whole label is digits.
 //
 // Published because it is the rule a decoder written from the prose
-// gets wrong, and because a test that pins it is worth more than a
-// comment.
+// gets wrong.
 //
 // ```novo
 // use punycode
@@ -179,4 +325,68 @@ pub fn is_canonical(label: Str) -> Bool []
 //     println("${a} ${b}")   // 7 -1
 // ```
 pub fn delimiter_at(encoded: Str) -> Int []
-    todo("punycode.delimiter_at")
+    var at = -1
+    for i in 0..str.len(encoded)
+        if str.byte_at_or(encoded, i, 0) == punyboot.delimiter()
+            at = i
+    at
+
+// The code points of a string, decoded from UTF-8.
+//
+// A byte that starts no well-formed sequence is read as itself, so a
+// malformed string still yields one value per byte it could not read.
+// The encoder reads its input through this.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     println("${punycode.code_points("bü")}")   // [98, 252]
+// ```
+pub fn code_points(text: Str) -> [Int]
+    var out: [Int] = []
+    let n = str.len(text)
+    var i = 0
+    for _ in 0..n
+        if i >= n
+            break
+        let b = str.byte_at_or(text, i, 0)
+        let want = if b >= 0xF0 and b < 0xF8
+            4
+        else
+            if b >= 0xE0 and b < 0xF0
+                3
+            else
+                if b >= 0xC0 and b < 0xE0
+                    2
+                else
+                    1
+        let whole = want > 1 and list.all(list.range(i + 1, i + want), k => (str.byte_at_or(text, k, 0) & 0xC0) == 0x80)
+        if whole
+            let lead = if want == 2
+                b & 0x1F
+            else
+                if want == 3
+                    b & 0x0F
+                else
+                    b & 0x07
+            list.push(out, list.fold(list.range(i + 1, i + want),
+                (cp, k) => cp * 64 + (str.byte_at_or(text, k, 0) & 0x3F),
+                lead))
+            i = i + want
+        else
+            list.push(out, b)
+            i = i + 1
+    out
+
+// A string from code points, encoded as UTF-8: the inverse of
+// `code_points` for a well-formed string.
+//
+// ```novo
+// use punycode
+//
+// fn main() [io]
+//     println(punycode.text_of([98, 252]))   // bü
+// ```
+pub fn text_of(cps: [Int]) -> Str
+    str.join(list.map(cps, c => str.from_char(c)), "")
