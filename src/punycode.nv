@@ -19,6 +19,7 @@
 // bootstring encoding, and IDNA is one application of it.
 
 use punyboot
+use punyerr
 
 // The four characters in front of an encoded label: `"xn--"`.
 //

@@ -53,7 +53,7 @@ fn test_the_decoder_refuses_what_it_cannot_read() [io]
     test.case("each length and buffer form passes a refusal on")
     test.assert(int_or(punycode.decoded_len("b!")) == -1)
     var c = bytes.cursor_be(bytes.zeros(8))
-    test.assert(int_or(punycode.decode_into("b!", c)) == -1)
+    test.assert(int_or(punycode.decode_into("b!", var c)) == -1)
     test.case("a label with no hyphen is all digits")
     match punycode.decode("kva")
         Ok(u)  => test.assert_eq(punycode.code_points(u), [0x0369])
@@ -68,7 +68,7 @@ fn test_the_encoder_refuses_a_label_it_cannot_count() [io]
     test.assert_eq(code_of(punycode.encode(huge)), "decode 0 ${huge}")
     test.assert(int_or(punycode.encoded_len(huge)) == -1)
     var c = bytes.cursor_be(bytes.zeros(8))
-    test.assert(int_or(punycode.encode_into(huge, c)) == -1)
+    test.assert(int_or(punycode.encode_into(huge, var c)) == -1)
     test.assert(text_or(punycode.encode_label(huge)) == "")
     test.case("a label whose encoding is past 63 characters")
     let long = str.repeat("ü", 70)
@@ -216,9 +216,9 @@ fn test_the_compact_data_is_refused_by_every_conversion() [io]
     test.assert_eq(code_of(punyidna.label_to_unicode(d, "a", n)), "normalize -1 ")
     test.assert(int_or(punyidna.ascii_len(d, "a", n)) == -1)
     var a = bytes.cursor_be(bytes.zeros(8))
-    test.assert(int_or(punyidna.to_ascii_into(d, "a", n, a)) == -1)
+    test.assert(int_or(punyidna.to_ascii_into(d, "a", n, var a)) == -1)
     var u = bytes.cursor_be(bytes.zeros(8))
-    test.assert(int_or(punyidna.to_unicode_into(d, "a", n, u)) == -1)
+    test.assert(int_or(punyidna.to_unicode_into(d, "a", n, var u)) == -1)
 
 @test
 fn test_every_refusal_has_a_message_a_label_an_offset_and_a_step() [io]
