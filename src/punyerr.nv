@@ -107,6 +107,7 @@ impl Error for PunyError
     //     println(e.message())
     //     // punycode: empty label at position 1; a..b is not a domain
     // ```
+    @tier(app)
     fn message(self) -> Str
         match self
             PunyLabelTooLong(l, n)          => "punycode: label ${l} is ${n} characters, over the 63 a label may hold"

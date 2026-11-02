@@ -1,0 +1,42 @@
+// hostile_tests.nv — encoded labels whose digits grow without end.
+
+use std.test
+use punycode
+
+// What a decode answered, as a word.
+fn kind(r: Result<Str, PunyError>) -> Str
+    match r
+        Ok(_)                       => "ok"
+        Err(PunyOverflow(_, _))     => "overflow"
+        Err(PunyBadDigit(_, _, _))  => "bad-digit"
+        Err(PunyBadCodePoint(_, _)) => "bad-code-point"
+        Err(_)                      => "other"
+
+@test
+fn test_digit_runs_that_overflow_are_refused() [io]
+    test.case("a run of the largest digit is a code point past the range")
+    test.assert_eq(kind(punycode.decode("z".repeat(1000))), "bad-code-point")
+    test.assert_eq(kind(punycode.decode_label("xn--" + "z".repeat(5000))), "bad-code-point")
+    test.case("a run of digits that never ends is a digit that is not there")
+    test.assert_eq(kind(punycode.decode("abc-" + "z".repeat(100000))), "bad-digit")
+    test.assert_eq(kind(punycode.decode("a-" + "zzzzzzzzzzzzzzzzzzz0".repeat(5000))), "bad-digit")
+    test.case("a delta that would pass 2^63 overflows")
+    test.assert_eq(kind(punycode.decode("-" + "9".repeat(100000))), "overflow")
+    test.case("a delta of seventy-two of the largest digit is refused")
+    test.assert_eq(kind(punycode.decode("a-" + "z".repeat(72))), "bad-digit")
+    test.case("a hundred thousand delimiters are a basic string, not an encoding")
+    test.assert_eq(kind(punycode.decode("-".repeat(100000))), "ok")
+    test.case("honest labels still decode")
+    match punycode.decode("bcher-kva")
+        Ok(s)  => test.assert(s == "bücher")
+        Err(_) => test.assert(false)
+
+@test
+fn test_long_inputs_round_trip_in_bounded_time() [io]
+    let long = "ü".repeat(20000)
+    match punycode.encode(long)
+        Ok(s)  =>
+            match punycode.decode(s)
+                Ok(back) => test.assert(back == long)
+                Err(_)   => test.assert(false)
+        Err(_) => test.assert(false)

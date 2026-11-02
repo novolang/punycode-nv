@@ -78,7 +78,8 @@ pub struct PunyIdnaOptions
 // fn main() [io]
 //     println("${punyidna.nontransitional().transitional}")   // false
 // ```
-pub fn nontransitional() -> PunyIdnaOptions []
+pub @tier(app)
+fn nontransitional() -> PunyIdnaOptions []
     PunyIdnaOptions { transitional: false,
         use_std3_ascii_rules: false,
         check_hyphens: false,
@@ -93,7 +94,8 @@ pub fn nontransitional() -> PunyIdnaOptions []
 // `ss` and `ς` becomes `σ`, which means two different names resolve to
 // one place — and that a name a user typed is not the name that was
 // looked up.
-pub fn transitional() -> PunyIdnaOptions []
+pub @tier(app)
+fn transitional() -> PunyIdnaOptions []
     PunyIdnaOptions { transitional: true,
         use_std3_ascii_rules: false,
         check_hyphens: false,
@@ -106,7 +108,8 @@ pub fn transitional() -> PunyIdnaOptions []
 //
 // What a registry validating a name somebody wants to buy would use,
 // and stricter than any resolver.
-pub fn strict() -> PunyIdnaOptions []
+pub @tier(app)
+fn strict() -> PunyIdnaOptions []
     PunyIdnaOptions { transitional: false,
         use_std3_ascii_rules: true,
         check_hyphens: true,
@@ -169,7 +172,8 @@ pub fn status_name(s: PunyStatus) -> Str []
 //     let d = udata.data_full()
 //     println(punyidna.status_name(punyidna.char_status(d, 0x41)))   // mapped
 // ```
-pub fn char_status(d: UniData, cp: Int) -> PunyStatus []
+pub @tier(app)
+fn char_status(d: UniData, cp: Int) -> PunyStatus []
     let at = entry_of(cp)
     let letter = byte(UTS46, at * 8 + 3)
     if letter == 'V'
@@ -193,7 +197,8 @@ pub fn char_status(d: UniData, cp: Int) -> PunyStatus []
 // under `nontransitional` and to its IDNA2003 value under
 // `transitional`, which is the whole of the difference between the
 // two.
-pub fn map_char(d: UniData, cp: Int, o: PunyIdnaOptions) -> [Int] []
+pub @tier(app)
+fn map_char(d: UniData, cp: Int, o: PunyIdnaOptions) -> [Int] []
     let at = entry_of(cp)
     let letter = byte(UTS46, at * 8 + 3)
     if letter == 'M' or letter == 'D' and o.transitional
@@ -221,7 +226,8 @@ pub fn map_char(d: UniData, cp: Int, o: PunyIdnaOptions) -> [Int] []
 //         Ok(s)  => println(s)   // bücher.example
 //         Err(e) => println(e.message())
 // ```
-pub fn map(d: UniData, input: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
+pub @tier(app)
+fn map(d: UniData, input: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
     if not d.complete
         return Err(PunyDataIncomplete("normalisation above U+FFFF"))
     let mapped = list.flat_map(punycode.code_points(input), c => map_char(d, c, o))
@@ -249,7 +255,8 @@ pub fn map(d: UniData, input: Str, o: PunyIdnaOptions) -> Result<Str, PunyError>
 //         Some(e) => println(e.message())
 //         None    => println("valid")
 // ```
-pub fn validate_label(d: UniData, label: Str, o: PunyIdnaOptions) -> ?PunyError []
+pub @tier(app)
+fn validate_label(d: UniData, label: Str, o: PunyIdnaOptions) -> ?PunyError []
     validate(d, label, o, o.check_bidi and is_bidi_domain(d, label))
 
 // RFC 5893's bidi rule, on its own.
@@ -262,7 +269,8 @@ pub fn validate_label(d: UniData, label: Str, o: PunyIdnaOptions) -> ?PunyError 
 // label only when the domain contains a right-to-left character
 // anywhere — which is why it takes the domain's own answer rather than
 // deciding per label, and why `is_bidi_domain` is published beside it.
-pub fn bidi_rule(d: UniData, label: Str) -> ?PunyError []
+pub @tier(app)
+fn bidi_rule(d: UniData, label: Str) -> ?PunyError []
     let classes = list.map(punycode.code_points(label), c => bidi_class(c))
     let n = list.len(classes)
     if n == 0
@@ -293,7 +301,8 @@ pub fn bidi_rule(d: UniData, label: Str) -> ?PunyError []
 // The scoping decision RFC 5893 makes: a purely left-to-right domain
 // is not subject to the rule, and applying it anyway would refuse
 // perfectly good names.
-pub fn is_bidi_domain(d: UniData, domain: Str) -> Bool []
+pub @tier(app)
+fn is_bidi_domain(d: UniData, domain: Str) -> Bool []
     list.any(punycode.code_points(domain), c => is_rtl(bidi_class(c)))
 
 // RFC 5892 Appendix A's CONTEXTJ rules: ZERO WIDTH JOINER and ZERO
@@ -304,7 +313,8 @@ pub fn is_bidi_domain(d: UniData, domain: Str) -> Bool []
 // under a context rule rather than banned.  The rule is that a joiner
 // must follow a virama, or sit between characters whose joining types
 // permit it.
-pub fn contextj_rule(d: UniData, label: Str) -> ?PunyError []
+pub @tier(app)
+fn contextj_rule(d: UniData, label: Str) -> ?PunyError []
     let cps = punycode.code_points(label)
     var offset = 0
     for i in 0..list.len(cps)
@@ -326,7 +336,8 @@ pub fn contextj_rule(d: UniData, label: Str) -> ?PunyError []
 // both are under `check_joiners` here rather than under two flags,
 // because a caller that wanted one and not the other has not been
 // observed.
-pub fn contexto_rule(d: UniData, label: Str) -> ?PunyError []
+pub @tier(app)
+fn contexto_rule(d: UniData, label: Str) -> ?PunyError []
     let cps = punycode.code_points(label)
     var offset = 0
     for i in 0..list.len(cps)
@@ -354,7 +365,8 @@ pub fn contexto_rule(d: UniData, label: Str) -> ?PunyError []
 //         Ok(s)  => println(s)   // xn--bcher-kva.example
 //         Err(e) => println(e.message())
 // ```
-pub fn to_ascii(d: UniData, domain: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
+pub @tier(app)
+fn to_ascii(d: UniData, domain: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
     match to_ascii_labels(d, domain, o)
         Err(e)     => Err(e)
         Ok(labels) =>
@@ -370,8 +382,9 @@ pub fn to_ascii(d: UniData, domain: Str, o: PunyIdnaOptions) -> Result<Str, Puny
 // The form url-nv's host parser wants: it assembles a URL in one
 // buffer.  The cursor panics if the buffer is too small, as every
 // cursor write does.
-pub fn to_ascii_into(d: UniData, domain: Str, o: PunyIdnaOptions,
-                     var dst: Cursor) -> Result<Int, PunyError> []
+pub @tier(app)
+fn to_ascii_into(d: UniData, domain: Str, o: PunyIdnaOptions,
+                 var dst: Cursor) -> Result<Int, PunyError> []
     match to_ascii(d, domain, o)
         Err(e) => Err(e)
         Ok(s)  =>
@@ -386,15 +399,17 @@ pub fn to_ascii_into(d: UniData, domain: Str, o: PunyIdnaOptions,
 // display a name is worse than displaying it in its encoded form.
 // `PunyError` is still in the signature for the length and structural
 // refusals that happen before any label is looked at.
-pub fn to_unicode(d: UniData, domain: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
+pub @tier(app)
+fn to_unicode(d: UniData, domain: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
     match map(d, domain, o)
         Err(e)     => Err(e)
         Ok(mapped) => Ok(join_labels(list.map(split_labels(mapped), l => shown(d, l, o))))
 
 // The same, written through the caller's cursor as UTF-8, answering
 // how many characters were written, counted in code points.
-pub fn to_unicode_into(d: UniData, domain: Str, o: PunyIdnaOptions,
-                       var dst: Cursor) -> Result<Int, PunyError> []
+pub @tier(app)
+fn to_unicode_into(d: UniData, domain: Str, o: PunyIdnaOptions,
+                   var dst: Cursor) -> Result<Int, PunyError> []
     match to_unicode(d, domain, o)
         Err(e) => Err(e)
         Ok(s)  =>
@@ -408,7 +423,8 @@ pub fn to_unicode_into(d: UniData, domain: Str, o: PunyIdnaOptions,
 // a wildcard.  A label whose mapping holds a full stop, such as one
 // written with IDEOGRAPHIC FULL STOP, is refused.  The length limits
 // are not checked.
-pub fn label_to_ascii(d: UniData, label: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
+pub @tier(app)
+fn label_to_ascii(d: UniData, label: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
     match map(d, label, o)
         Err(e)     => Err(e)
         Ok(mapped) =>
@@ -419,7 +435,8 @@ pub fn label_to_ascii(d: UniData, label: Str, o: PunyIdnaOptions) -> Result<Str,
 
 // One label to its Unicode form: decoded when it is valid punycode, and
 // as it was mapped otherwise.
-pub fn label_to_unicode(d: UniData, label: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
+pub @tier(app)
+fn label_to_unicode(d: UniData, label: Str, o: PunyIdnaOptions) -> Result<Str, PunyError> []
     match map(d, label, o)
         Err(e)     => Err(e)
         Ok(mapped) => Ok(shown(d, mapped, o))
@@ -442,18 +459,21 @@ pub fn label_to_unicode(d: UniData, label: Str, o: PunyIdnaOptions) -> Result<St
 //     let n = punyidna.split_labels("a.b.c").len()
 //     println("${n}")   // 3
 // ```
-pub fn split_labels(domain: Str) -> [Str] []
+pub @tier(app)
+fn split_labels(domain: Str) -> [Str] []
     str.split(domain, ".")
 
 // Labels joined with `.`.
-pub fn join_labels(labels: [Str]) -> Str []
+pub @tier(app)
+fn join_labels(labels: [Str]) -> Str []
     str.join(labels, ".")
 
 // How many characters the ASCII form of this domain would occupy.
 //
 // For a caller sizing a buffer before `to_ascii_into`, and for one
 // deciding whether a name will fit before it commits to converting it.
-pub fn ascii_len(d: UniData, domain: Str, o: PunyIdnaOptions) -> Result<Int, PunyError> []
+pub @tier(app)
+fn ascii_len(d: UniData, domain: Str, o: PunyIdnaOptions) -> Result<Int, PunyError> []
     match to_ascii(d, domain, o)
         Ok(s)  => Ok(str.len(s))
         Err(e) => Err(e)
@@ -465,7 +485,8 @@ pub fn ascii_len(d: UniData, domain: Str, o: PunyIdnaOptions) -> Result<Int, Pun
 // a person a name and say whether it can be registered.  The limits
 // are checked whatever `verify_dns_length` says, and a name that does
 // not convert at all does not fit.
-pub fn fits_dns(d: UniData, domain: Str, o: PunyIdnaOptions) -> Bool []
+pub @tier(app)
+fn fits_dns(d: UniData, domain: Str, o: PunyIdnaOptions) -> Bool []
     let checked = PunyIdnaOptions { transitional: o.transitional,
         use_std3_ascii_rules: o.use_std3_ascii_rules,
         check_hyphens: o.check_hyphens,
@@ -490,7 +511,8 @@ pub fn fits_dns(d: UniData, domain: Str, o: PunyIdnaOptions) -> Bool []
 // It uses `url_options()`, which is not `strict()`: a URL host is not a
 // registry application, and refusing `_` would break a great deal of
 // deployed naming.
-pub fn host_to_ascii(d: UniData, host: Str) -> Result<Str, PunyError> []
+pub @tier(app)
+fn host_to_ascii(d: UniData, host: Str) -> Result<Str, PunyError> []
     to_ascii(d, host, url_options())
 
 // A URL's host to its display form, for showing a person.
@@ -498,7 +520,8 @@ pub fn host_to_ascii(d: UniData, host: Str) -> Result<Str, PunyError> []
 // The other half of what a browser's address bar does: the resolver
 // gets `host_to_ascii` and the person sees this.  It never fails on a
 // label, for the reason `to_unicode` gives.
-pub fn host_to_unicode(d: UniData, host: Str) -> Result<Str, PunyError> []
+pub @tier(app)
+fn host_to_unicode(d: UniData, host: Str) -> Result<Str, PunyError> []
     to_unicode(d, host, url_options())
 
 // The options the WHATWG URL standard's host parser uses, as a value.
@@ -514,7 +537,8 @@ pub fn host_to_unicode(d: UniData, host: Str) -> Result<Str, PunyError> []
 // fn main() [io]
 //     println("${punyidna.url_options().verify_dns_length}")   // false
 // ```
-pub fn url_options() -> PunyIdnaOptions []
+pub @tier(app)
+fn url_options() -> PunyIdnaOptions []
     PunyIdnaOptions { transitional: false,
         use_std3_ascii_rules: false,
         check_hyphens: false,
@@ -551,12 +575,14 @@ fn byte(t: Str, at: Int) -> Int
     str.byte_at_or(t, at, 0)
 
 // A big-endian number of `width` bytes of a table.
+@tier(app)
 fn number(t: Str, at: Int, width: Int) -> Int
     list.fold(list.range(at, at + width), (n, i) => n * 256 + str.byte_at_or(t, i, 0), 0)
 
 // The index of the last entry of a covering table whose first code
 // point is at or below `cp`.  The first entry of every table starts at
 // U+0000, so there always is one.
+@tier(app)
 fn cover(t: Str, entries: Int, size: Int, cp: Int) -> Int
     var lo = 0
     var hi = entries - 1
@@ -571,24 +597,29 @@ fn cover(t: Str, entries: Int, size: Int, cp: Int) -> Int
     lo
 
 // The UTS46 entry that covers `cp`.
+@tier(app)
 fn entry_of(cp: Int) -> Int
     cover(UTS46, UTS46_ENTRIES, 8, cp)
 
 // The replacement an UTS46 entry carries, as code points.
+@tier(app)
 fn replacement(at: Int) -> [Int]
     let offset = number(UTS46, at * 8 + 4, 3)
     let count = byte(UTS46, at * 8 + 7)
     list.map(list.range(offset, offset + count), k => number(REPL, k * 3, 3))
 
 // The Bidi_Class of a code point.
+@tier(app)
 fn bidi_class(cp: Int) -> Int
     byte(BIDI, cover(BIDI, BIDI_ENTRIES, 4, cp) * 4 + 3)
 
 // The Joining_Type of a code point, 0 when it has none.
+@tier(app)
 fn joining_type(cp: Int) -> Int
     byte(JOIN, cover(JOIN, JOIN_ENTRIES, 4, cp) * 4 + 3)
 
 // The CONTEXTO script of a code point, 0 for any other script.
+@tier(app)
 fn script_of(cp: Int) -> Int
     byte(SCRIPT, cover(SCRIPT, SCRIPT_ENTRIES, 4, cp) * 4 + 3)
 
@@ -601,11 +632,13 @@ fn is_rtl(c: Int) -> Bool
     c == B_R or c == B_AL or c == B_AN
 
 // The last class of a label that is not NSM.
+@tier(app)
 fn last_strong(classes: [Int]) -> Int
     list.fold(classes, (last, c) => (if c == B_NSM then last else c), B_NSM)
 
 // UTS #46 section 4.1 over one mapped label, with the bidi rule applied
 // when `bidi` says the domain is a bidi domain.
+@tier(app)
 fn validate(d: udata.UniData, label: Str, o: PunyIdnaOptions, bidi: Bool) -> ?punyerr.PunyError
     if not unorm.is_normalized(d, label, FormNfc)
         return Some(PunyNotNormalized(label))
@@ -631,6 +664,7 @@ fn validate(d: udata.UniData, label: Str, o: PunyIdnaOptions, bidi: Bool) -> ?pu
 // The hyphen rules: with `check_hyphens` on, no hyphen first, last, or
 // in the third and fourth positions together; with it off, no `xn--`
 // at the start of a label that is not punycode.
+@tier(app)
 fn hyphen_fault(label: Str, o: PunyIdnaOptions) -> ?punyerr.PunyError
     let n = str.len(label)
     if not o.check_hyphens
@@ -647,6 +681,7 @@ fn hyphen_fault(label: Str, o: PunyIdnaOptions) -> ?punyerr.PunyError
 
 // Whether one code point of a mapped label is allowed by the table and
 // the options.
+@tier(app)
 fn char_fault(d: udata.UniData, label: Str, offset: Int, c: Int,
               o: PunyIdnaOptions) -> ?punyerr.PunyError
     if c == '.'
@@ -666,6 +701,7 @@ fn char_fault(d: udata.UniData, label: Str, offset: Int, c: Int,
 // RFC 5892 appendix A.1 and A.2: a joiner after a virama, or a ZERO
 // WIDTH NON-JOINER between a left-joining and a right-joining
 // character with only transparent ones around it.
+@tier(app)
 fn joiner_ok(d: udata.UniData, cps: [Int], i: Int) -> Bool
     if i > 0 and unorm.combining_class(d, cps[i - 1]) == 9
         return true
@@ -690,6 +726,7 @@ fn joiner_ok(d: udata.UniData, cps: [Int], i: Int) -> Bool
     left and right
 
 // RFC 5892 appendix A.3 to A.9 for the code point at `i`.
+@tier(app)
 fn contexto_ok(cps: [Int], i: Int) -> Bool
     let c = cps[i]
     let n = list.len(cps)
@@ -709,6 +746,7 @@ fn contexto_ok(cps: [Int], i: Int) -> Bool
 
 // Steps one to four over a whole domain: map, split, and convert and
 // validate each label.
+@tier(app)
 fn to_ascii_labels(d: udata.UniData, domain: Str,
                    o: PunyIdnaOptions) -> Result<[Str], punyerr.PunyError>
     match map(d, domain, o)
@@ -731,12 +769,14 @@ fn to_ascii_labels(d: udata.UniData, domain: Str,
 
 // A label decoded when it is punycode that decodes, and itself
 // otherwise.
+@tier(app)
 fn decoded_or_self(label: Str) -> Str
     match punycode.decode_label(label)
         Ok(u)  => u
         Err(_) => label
 
 // One mapped label to its ASCII form.
+@tier(app)
 fn ascii_label(d: udata.UniData, label: Str, o: PunyIdnaOptions,
                bidi: Bool) -> Result<Str, punyerr.PunyError>
     if label == ""
@@ -759,6 +799,7 @@ fn ascii_label(d: udata.UniData, label: Str, o: PunyIdnaOptions,
 // ASCII, a body that does not decode, a decoding with nothing to
 // encode, an encoding an encoder would not produce, or a decoded label
 // that is not valid under nontransitional processing.
+@tier(app)
 fn encoded_fault(d: udata.UniData, label: Str, o: PunyIdnaOptions, bidi: Bool) -> ?punyerr.PunyError
     for i in 0..str.len(label)
         let b = str.byte_at_or(label, i, 0)
@@ -782,6 +823,7 @@ fn encoded_fault(d: udata.UniData, label: Str, o: PunyIdnaOptions, bidi: Bool) -
 
 // One mapped label as a person is shown it: decoded when it is valid
 // punycode, and as it was otherwise.
+@tier(app)
 fn shown(d: udata.UniData, label: Str, o: PunyIdnaOptions) -> Str
     if not punycode.is_encoded_label(label)
         return label
@@ -791,6 +833,7 @@ fn shown(d: udata.UniData, label: Str, o: PunyIdnaOptions) -> Str
 
 // The first length the DNS refuses: a label over 63 characters, or a
 // name over 253 without its trailing root dot.
+@tier(app)
 fn length_fault(labels: [Str], joined: Str) -> ?punyerr.PunyError
     for l in labels
         if str.len(l) > punyboot.max_label_len()

@@ -23,6 +23,11 @@ stability   = "experimental"
 # delegate to its host.
 layer       = "core"
 
+# `punyboot` is the half a device runs.  The other three modules speak
+# `Str` and `Cursor`, and `punyidna` reads the normalisation tables of
+# unicode-nv, which is not an embedded package.
+host_modules = ["punycode", "punyerr", "punyidna"]
+
 category    = "encoding"
 
 tags = ["punycode", "idna", "uts46", "rfc3492", "domain-names", "unicode", "embedded"]
